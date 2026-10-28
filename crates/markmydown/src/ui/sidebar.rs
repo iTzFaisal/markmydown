@@ -18,6 +18,9 @@ pub enum Message {
     NewFile,
     NewFolder,
     ImportFile,
+    Rename,
+    Delete,
+    Move,
 }
 
 /// Renders the workspace tree or the empty state.
@@ -96,7 +99,7 @@ pub fn view<'a>(
             .height(Length::Fill)
             .width(Length::Fill),
         separator(tokens),
-        row_of_actions(),
+        row_of_actions(active.is_some()),
     ]
     .width(Length::Fill)
     .height(Length::Fill)
@@ -117,11 +120,24 @@ fn collect_visible<'a>(
     }
 }
 
-fn row_of_actions<'a>() -> Element<'a, Message> {
-    iced::widget::row![
-        button(text("New").size(12)).on_press(Message::NewFile),
-        button(text("Folder").size(12)).on_press(Message::NewFolder),
-        button(text("Import").size(12)).on_press(Message::ImportFile),
+fn row_of_actions<'a>(has_active: bool) -> Element<'a, Message> {
+    let mut rename = button(text("Rename").size(11));
+    let mut delete = button(text("Delete").size(11));
+    let mut move_button = button(text("Move").size(11));
+    if has_active {
+        rename = rename.on_press(Message::Rename);
+        delete = delete.on_press(Message::Delete);
+        move_button = move_button.on_press(Message::Move);
+    }
+
+    iced::widget::column![
+        iced::widget::row![
+            button(text("New").size(11)).on_press(Message::NewFile),
+            button(text("Folder").size(11)).on_press(Message::NewFolder),
+            button(text("Import").size(11)).on_press(Message::ImportFile),
+        ]
+        .spacing(4),
+        iced::widget::row![rename, move_button, delete].spacing(4),
     ]
     .spacing(4)
     .padding(8)

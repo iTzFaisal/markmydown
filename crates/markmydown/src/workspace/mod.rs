@@ -8,5 +8,6 @@ pub mod import;
 pub mod ops;
 pub mod recovery;
 pub mod session;
+pub mod state;
 pub mod tree;
 pub mod watcher;

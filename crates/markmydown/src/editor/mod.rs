@@ -103,6 +103,11 @@ impl EditorPane {
         self.editor.goto_position(position)
     }
 
+    /// Restores an absolute vertical scroll offset.
+    pub fn scroll_to_vertical(&mut self, offset: f32) -> Task<EditorMessage> {
+        self.editor.scroll_to_vertical(offset)
+    }
+
     /// Applies a pure edit as one undo step, then restores the selection.
     pub fn apply_edit(&mut self, edit: TextEdit) -> Task<EditorMessage> {
         let mut tasks = Vec::with_capacity(2);
@@ -230,6 +235,13 @@ pub fn message_may_edit(message: &EditorMessage) -> bool {
             | EditorMessage::Redo
             | EditorMessage::ReplaceNext
             | EditorMessage::ReplaceAll
+            | EditorMessage::FocusNavigationShiftTab
+            | EditorMessage::ImeCommit(_)
+            | EditorMessage::ToggleComment
+            | EditorMessage::MoveLineUp
+            | EditorMessage::MoveLineDown
+            | EditorMessage::DuplicateLineUp
+            | EditorMessage::DuplicateLineDown
     )
 }
 

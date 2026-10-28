@@ -10,7 +10,7 @@ authors = ["markmydown contributors"]
 repository = "https://github.com/markmydown/markmydown"
 
 [workspace.dependencies]
-iced = { version = "=0.14.0", features = ["advanced", "canvas", "highlighter", "image", "markdown", "svg"] }
+iced = { version = "=0.14.0", features = ["advanced", "canvas", "highlighter", "image", "markdown", "smol", "svg"] }
 iced-code-editor = { path = "vendor/iced-code-editor" }
 comrak = { version = "=0.59.0", default-features = false, features = ["shortcodes"] }
 syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }

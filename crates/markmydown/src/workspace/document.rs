@@ -165,6 +165,12 @@ impl Document {
         self.missing
     }
 
+    /// Updates the document's path after a rename or move.
+    pub fn relocate(&mut self, path: impl Into<PathBuf>) {
+        self.path = path.into();
+        self.title = file_title(&self.path);
+    }
+
     pub fn line_ending(&self) -> LineEnding {
         self.line_ending
     }

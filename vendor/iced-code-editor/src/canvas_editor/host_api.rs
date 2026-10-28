@@ -103,6 +103,20 @@ impl super::CodeEditor {
         self.scroll_to_cursor()
     }
 
+    /// Scrolls the editor to an absolute vertical offset.
+    ///
+    /// Used by the host to restore a session's scroll position after opening
+    /// a document.
+    pub fn scroll_to_vertical(&mut self, offset: f32) -> Task<Message> {
+        iced::widget::operation::scroll_to(
+            self.scrollable_id.clone(),
+            iced::widget::scrollable::AbsoluteOffset {
+                x: None,
+                y: Some(offset.max(0.0)),
+            },
+        )
+    }
+
     /// Moves the caret to a zero-based position.
     pub fn goto_position(&mut self, position: (usize, usize)) -> Task<Message> {
         let position = self.clamp_position(position);

@@ -18,7 +18,7 @@ pub struct StatusInfo {
 }
 
 /// Renders the bottom status bar.
-pub fn view<'a, M: Clone + 'a>(info: &'a StatusInfo, tokens: &'a ThemeTokens) -> Element<'a, M> {
+pub fn view<'a, M: Clone + 'a>(info: StatusInfo, tokens: &'a ThemeTokens) -> Element<'a, M> {
     let mut content = row![]
         .spacing(14)
         .align_y(iced::alignment::Vertical::Center);

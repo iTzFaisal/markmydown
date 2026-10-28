@@ -18,18 +18,18 @@
 
 ## 2. Workspace and file safety
 
-- [ ] 2.1 Implement folder selection and the workspace tree model; verify opening a fixture folder lists `.md`, `.markdown`, `.mdown`, and `.txt` files and hides other files.
-- [ ] 2.2 Implement file and folder create, rename, delete, and move; verify each operation on disk and in the tree, including OS trash deletion.
-- [ ] 2.3 Implement tabs with dirty indicators and session restore; verify restarting restores open tabs, active tab, cursor, and scroll.
-- [ ] 2.4 Implement autosave, explicit save, and save-failure handling; verify a file is written after idle, Save writes immediately, and a read-only file shows an error without being marked saved.
-- [ ] 2.5 Implement atomic writes and mtime/hash tracking; verify no watcher feedback loop and no partial files after a simulated write failure.
-- [ ] 2.6 Implement the debounced file watcher, clean reload, conflict bar, and missing-file state; verify clean, dirty, and deleted external-change scenarios.
-- [ ] 2.7 Implement encoding and line-ending handling; verify UTF-8, CRLF, and an undecodable fixture without file corruption.
-- [ ] 2.8 Implement recovery buffers and crash recovery; verify killing the process with unsaved changes offers recovery on next launch.
-- [ ] 2.9 Implement Markdown and HTML import; verify Markdown import, HTML-to-Markdown conversion, and an invalid HTML fixture that leaves the workspace unchanged.
-- [ ] 2.10 Implement front matter parsing and metadata exposure; verify valid front matter is hidden from the body and invalid front matter is shown as text with a validation message.
-- [ ] 2.11 Add workspace and file-safety tests; verify `cargo test` covers the scenarios in `specs/document-workspace/spec.md`.
-- [ ] 2.12 Document the workspace model and file-safety behavior in `docs/workspace.md`; verify the documented scenarios match the tests.
+- [x] 2.1 Implement folder selection and the workspace tree model; verify opening a fixture folder lists `.md`, `.markdown`, `.mdown`, and `.txt` files and hides other files.
+- [x] 2.2 Implement file and folder create, rename, delete, and move; verify each operation on disk and in the tree, including OS trash deletion.
+- [x] 2.3 Implement tabs with dirty indicators and session restore; verify restarting restores open tabs, active tab, cursor, and scroll.
+- [x] 2.4 Implement autosave, explicit save, and save-failure handling; verify a file is written after idle, Save writes immediately, and a read-only file shows an error without being marked saved.
+- [x] 2.5 Implement atomic writes and mtime/hash tracking; verify no watcher feedback loop and no partial files after a simulated write failure.
+- [x] 2.6 Implement the debounced file watcher, clean reload, conflict bar, and missing-file state; verify clean, dirty, and deleted external-change scenarios.
+- [x] 2.7 Implement encoding and line-ending handling; verify UTF-8, CRLF, and an undecodable fixture without file corruption.
+- [x] 2.8 Implement recovery buffers and crash recovery; verify killing the process with unsaved changes offers recovery on next launch.
+- [x] 2.9 Implement Markdown and HTML import; verify Markdown import, HTML-to-Markdown conversion, and an invalid HTML fixture that leaves the workspace unchanged.
+- [x] 2.10 Implement front matter parsing and metadata exposure; verify valid front matter is hidden from the body and invalid front matter is shown as text with a validation message.
+- [x] 2.11 Add workspace and file-safety tests; verify `cargo test` covers the scenarios in `specs/document-workspace/spec.md`.
+- [x] 2.12 Document the workspace model and file-safety behavior in `docs/workspace.md`; verify the documented scenarios match the tests.
 
 ## 3. Editor
 
