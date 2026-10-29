@@ -4,6 +4,7 @@
 //! search, focus, and the layout settings all flow through the same public
 //! surface the Iced `update` function uses.
 
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use iced_code_editor::Message as EditorMessage;
@@ -16,6 +17,15 @@ use markmydown::editor::search::{self, SearchOptions};
 use markmydown::editor::stats;
 use markmydown::theme::tokens::{ThemeTokens, Typography};
 
+/// The editor uses a process-global focused-editor id. Serialize tests that
+/// create editors so a parallel test cannot steal focus mid-assertion.
+fn editor_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn pane(text: &str) -> EditorPane {
     let mut editor = EditorPane::new(text, &ThemeTokens::light(), &Typography::editor_default());
     editor.focus();
@@ -24,6 +34,7 @@ fn pane(text: &str) -> EditorPane {
 
 #[test]
 fn typing_selection_undo_redo_and_paste_flow_through_the_adapter() {
+    let _guard = editor_lock();
     let mut editor = pane("hello");
 
     let _ = editor.update(EditorMessage::End(false));
@@ -50,6 +61,7 @@ fn typing_selection_undo_redo_and_paste_flow_through_the_adapter() {
 
 #[test]
 fn ime_composition_is_committed_once_for_arabic_and_cjk() {
+    let _guard = editor_lock();
     let mut editor = pane("");
 
     let _ = editor.update(EditorMessage::ImeCommit("مرحبا".into()));
@@ -63,6 +75,7 @@ fn ime_composition_is_committed_once_for_arabic_and_cjk() {
 
 #[test]
 fn formatting_actions_produce_the_expected_markdown() {
+    let _guard = editor_lock();
     let mut bold = pane("hello world");
     let _ = bold.select_range((0, 6), (0, 11));
     let _ = bold.apply_format(FormatAction::Bold);
@@ -109,6 +122,7 @@ fn formatting_actions_produce_the_expected_markdown() {
 
 #[test]
 fn table_link_and_image_match_the_spec_scenarios() {
+    let _guard = editor_lock();
     let mut table = pane("");
     let _ = table.apply_format(FormatAction::Table);
     assert!(table.content().contains("| Column 1 | Column 2 |"));
@@ -133,6 +147,7 @@ fn table_link_and_image_match_the_spec_scenarios() {
 
 #[test]
 fn smart_editing_continues_indents_and_links_pasted_urls() {
+    let _guard = editor_lock();
     let mut list = pane("- item");
     let _ = list.update(EditorMessage::End(false));
     let _ = list.update(EditorMessage::Enter);
@@ -154,6 +169,7 @@ fn smart_editing_continues_indents_and_links_pasted_urls() {
 
 #[test]
 fn search_supports_case_regex_navigation_and_single_step_replace_all() {
+    let _guard = editor_lock();
     let text = "One one ONE\na1 b2";
 
     let insensitive = search::find_all(text, "one", SearchOptions::default()).expect("search");
@@ -225,6 +241,7 @@ fn outline_and_stats_cover_navigation_and_selection_counts() {
 
 #[test]
 fn focus_mode_toggles_and_restores_the_editor() {
+    let _guard = editor_lock();
     let mut editor = pane("# Title\n\nBody");
     assert!(!editor.focus_mode());
 
@@ -265,6 +282,7 @@ fn layout_modes_round_trip_and_split_ratio_persists() {
 
 #[test]
 fn a_one_megabyte_document_stays_within_the_interaction_budget() {
+    let _guard = editor_lock();
     let line = "## Heading with **bold** and [a link](https://example.com)\n\n";
     let mut source = String::with_capacity(1_100_000);
     while source.len() < 1_000_000 {
