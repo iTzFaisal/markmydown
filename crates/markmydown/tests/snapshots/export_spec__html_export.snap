@@ -1,0 +1,30 @@
+---
+source: crates/markmydown/tests/export_spec.rs
+expression: html
+---
+<h1>Field notes</h1>
+<p>A paragraph with <strong>strong</strong>, <em>emphasis</em>, and a <a href="https://example.com">link</a>.</p>
+<h2>Checklist</h2>
+<ul>
+<li class="task-list-item"><input type="checkbox" checked disabled> <p>one</p>
+</li>
+<li class="task-list-item"><input type="checkbox" disabled> <p>two</p>
+</li>
+</ul>
+<table>
+<thead><tr>
+<th style="text-align:left">Name</th>
+<th style="text-align:right">Value</th>
+</tr></thead>
+<tbody>
+<tr>
+<td style="text-align:left">Alpha</td>
+<td style="text-align:right">1</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>A quote.</p>
+</blockquote>
+<pre class="mmd-code-block"><code class="language-rust"><span style="color:#b48ead">fn</span><span style="color:#4f5b66"> </span><span style="color:#8fa1b3">main</span><span style="color:#4f5b66">(</span><span style="color:#4f5b66">)</span><span style="color:#4f5b66"> </span><span style="color:#4f5b66">{</span><span style="color:#4f5b66">}</span><span style="color:#4f5b66">
+</span></code></pre>

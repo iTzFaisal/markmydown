@@ -23,6 +23,24 @@ pub enum PageSize {
     A4,
 }
 
+impl PageSize {
+    /// Parses the value stored in settings. Unknown values fall back to
+    /// Letter, matching the settings validator.
+    pub fn parse(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_str() {
+            "a4" => Self::A4,
+            _ => Self::Letter,
+        }
+    }
+
+    pub fn as_settings(self) -> &'static str {
+        match self {
+            Self::Letter => "letter",
+            Self::A4 => "a4",
+        }
+    }
+}
+
 /// PDF layout options.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PdfOptions {
@@ -107,7 +125,7 @@ fn ensure_pdf_extension(path: &Path) -> PathBuf {
     }
 }
 
-fn build_elements(document: &PreviewDocument, temp_dir: &Path) -> Vec<Element> {
+pub(crate) fn build_elements(document: &PreviewDocument, temp_dir: &Path) -> Vec<Element> {
     let mut elements = Vec::new();
     for block in &document.blocks {
         append_block(block, &mut elements, temp_dir);
@@ -334,7 +352,40 @@ fn svg_to_png(svg: &str) -> Result<Vec<u8>, String> {
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
-    pixmap.encode_png().map_err(|error| error.to_string())
+    encode_rgb_png(&pixmap)
+}
+
+/// Encodes a pixmap as an RGB PNG with the transparent background composited
+/// over white.
+///
+/// `pdfrs` embeds PNG images with three color components, while `tiny-skia`
+/// produces RGBA data. Flattening here keeps diagrams and equations
+/// embeddable without adding an image-format dependency.
+fn encode_rgb_png(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, String> {
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let mut rgb = Vec::with_capacity((width as usize) * (height as usize) * 3);
+
+    for pixel in pixmap.data().as_chunks::<4>().0 {
+        let alpha = pixel[3] as u32;
+        let white = 255 - alpha;
+        rgb.push((pixel[0] as u32 + white).min(255) as u8);
+        rgb.push((pixel[1] as u32 + white).min(255) as u8);
+        rgb.push((pixel[2] as u32 + white).min(255) as u8);
+    }
+
+    let mut encoded = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut encoded, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+        writer
+            .write_image_data(&rgb)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(encoded)
 }
 
 fn strip_html(html: &str) -> String {
@@ -407,5 +458,96 @@ mod tests {
         let png = svg_to_png(svg).expect("png");
 
         assert!(png.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn page_sizes_parse_from_settings() {
+        assert_eq!(PageSize::parse("letter"), PageSize::Letter);
+        assert_eq!(PageSize::parse("A4"), PageSize::A4);
+        assert_eq!(PageSize::parse("a4"), PageSize::A4);
+        assert_eq!(PageSize::parse("legal"), PageSize::Letter);
+        assert_eq!(PageSize::A4.as_settings(), "a4");
+        assert_eq!(PageSize::Letter.as_settings(), "letter");
+    }
+
+    #[test]
+    fn long_documents_are_not_truncated() {
+        let mut source = String::from("# Long document\n\n");
+        for index in 0..150 {
+            source.push_str(&format!(
+                "## Section {index}\n\nParagraph {index} with enough text to wrap across the page.\n\n"
+            ));
+        }
+        let document = parser::parse(&source, 0);
+        let bytes = export_bytes(
+            &document,
+            &PdfOptions::default(),
+            &ThemeTokens::light(),
+            &Typography::preview_default(),
+            None,
+        )
+        .expect("pdf");
+
+        assert!(bytes.starts_with(b"%PDF"));
+        assert!(
+            bytes.len() > 20_000,
+            "a long document should produce a substantial PDF, got {} bytes",
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn margins_change_the_layout() {
+        let document = parser::parse(
+            "# Margins\n\nA paragraph long enough to wrap when the page margin is large.\n",
+            0,
+        );
+        let narrow = export_bytes(
+            &document,
+            &PdfOptions {
+                margin: 18.0,
+                ..PdfOptions::default()
+            },
+            &ThemeTokens::light(),
+            &Typography::preview_default(),
+            None,
+        )
+        .expect("pdf");
+        let wide = export_bytes(
+            &document,
+            &PdfOptions {
+                margin: 144.0,
+                ..PdfOptions::default()
+            },
+            &ThemeTokens::light(),
+            &Typography::preview_default(),
+            None,
+        )
+        .expect("pdf");
+
+        assert_ne!(narrow, wide);
+    }
+
+    #[test]
+    fn mermaid_diagrams_are_embedded_as_images() {
+        let document = parser::parse(
+            "```mermaid\nflowchart TD\n    A[Start] --> B[Done]\n```\n",
+            0,
+        );
+        let bytes = export_bytes(
+            &document,
+            &PdfOptions::default(),
+            &ThemeTokens::light(),
+            &Typography::preview_default(),
+            None,
+        )
+        .expect("pdf");
+        let text = String::from_utf8_lossy(&bytes);
+
+        assert!(bytes.starts_with(b"%PDF"));
+        assert!(
+            text.contains("/Subtype /Image") || text.contains("/Image"),
+            "the diagram should be embedded as an image"
+        );
     }
 }

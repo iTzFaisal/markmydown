@@ -1,6 +1,26 @@
 //! Quick-open fuzzy search.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use iced::widget::{Space, button, column, container, scrollable, text, text_input};
+use iced::{Element, Length};
+
+use crate::theme::tokens::ThemeTokens;
+
+/// User actions in the quick-open palette.
+#[derive(Debug, Clone)]
+pub enum Message {
+    QueryChanged(String),
+    Move(i32),
+    Accept,
+    Open(PathBuf),
+    Close,
+}
+
+/// The search field id used to focus the palette.
+pub fn input_id() -> iced::widget::Id {
+    iced::widget::Id::new("markmydown-quick-open")
+}
 
 /// A workspace document offered by quick open.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +146,112 @@ pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     } else {
         None
     }
+}
+
+/// Renders the quick-open palette over the workspace.
+pub fn view<'a>(quick: &'a QuickOpen, tokens: &'a ThemeTokens) -> Element<'a, Message> {
+    let results =
+        quick
+            .filtered()
+            .take(12)
+            .enumerate()
+            .fold(column![].spacing(2), |list, (index, entry)| {
+                let selected = index == quick.selected;
+                let background = if selected {
+                    tokens.selection
+                } else {
+                    tokens.surface
+                };
+
+                list.push(
+                    button(
+                        column![
+                            text(entry.title.clone()).size(13).color(tokens.text),
+                            text(entry.relative.clone()).size(10).color(tokens.muted),
+                        ]
+                        .spacing(1),
+                    )
+                    .width(Length::Fill)
+                    .padding([5, 8])
+                    .on_press(Message::Open(entry.path.clone()))
+                    .style(move |theme, status| {
+                        let mut style = button::text(theme, status);
+                        style.background = Some(background.into());
+                        style
+                    }),
+                )
+            });
+
+    let results: Element<'a, Message> = if quick.is_empty() {
+        container(text("No matching documents").size(12).color(tokens.muted))
+            .padding(10)
+            .into()
+    } else {
+        scrollable(results).height(Length::Fixed(320.0)).into()
+    };
+
+    let card = container(
+        column![
+            text_input("Type to find a document…", &quick.query)
+                .id(input_id())
+                .on_input(Message::QueryChanged)
+                .on_submit(Message::Accept)
+                .padding(8),
+            results,
+            row_hint(tokens),
+        ]
+        .spacing(8)
+        .padding(12),
+    )
+    .width(Length::Fixed(560.0))
+    .style(move |_| container::Style {
+        background: Some(tokens.surface_raised.into()),
+        border: iced::border::Border {
+            color: tokens.border,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.28),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 20.0,
+        },
+        ..container::Style::default()
+    });
+
+    container(card).center_x(Length::Fill).padding(60).into()
+}
+
+fn row_hint<'a>(tokens: &'a ThemeTokens) -> Element<'a, Message> {
+    iced::widget::row![
+        text("↑↓ move").size(10).color(tokens.muted),
+        Space::new().width(Length::Fixed(12.0)),
+        text("Enter open").size(10).color(tokens.muted),
+        Space::new().width(Length::Fixed(12.0)),
+        text("Esc close").size(10).color(tokens.muted),
+        Space::new().width(Length::Fill),
+        button(text("Close").size(10)).on_press(Message::Close),
+    ]
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+/// Builds entries from a workspace tree.
+pub fn entries_from_tree(root: &Path, tree: &crate::workspace::tree::WorkspaceTree) -> Vec<Entry> {
+    tree.files()
+        .into_iter()
+        .map(|node| {
+            let relative = node.path.strip_prefix(root).map_or_else(
+                |_| node.path.display().to_string(),
+                |path| path.display().to_string(),
+            );
+            Entry {
+                path: node.path.clone(),
+                title: node.name.clone(),
+                relative,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

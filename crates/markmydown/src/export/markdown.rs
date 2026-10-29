@@ -24,8 +24,13 @@ pub fn export(path: impl AsRef<Path>, source: &str) -> Result<PathBuf, MarkdownE
     Ok(path)
 }
 
-/// Suggested file name for the save dialog.
+/// Suggested Markdown file name for the save dialog.
 pub fn suggested_name(title: &str) -> String {
+    suggested_name_with_extension(title, "md")
+}
+
+/// Suggested file name for the save dialog with the requested extension.
+pub fn suggested_name_with_extension(title: &str, extension: &str) -> String {
     let cleaned: String = title
         .chars()
         .map(|ch| {
@@ -38,9 +43,9 @@ pub fn suggested_name(title: &str) -> String {
         .collect();
     let cleaned = cleaned.trim().trim_matches('-');
     if cleaned.is_empty() {
-        String::from("document.md")
+        format!("document.{extension}")
     } else {
-        format!("{cleaned}.md")
+        format!("{cleaned}.{extension}")
     }
 }
 

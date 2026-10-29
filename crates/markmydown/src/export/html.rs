@@ -50,11 +50,9 @@ pub struct HtmlOptions<'a> {
     pub embed_images: bool,
 }
 
-/// Renders a complete standalone HTML document.
-pub fn render_document(
-    document: &PreviewDocument,
-    options: &HtmlOptions<'_>,
-) -> Result<String, ExportError> {
+/// Renders just the document body. Used by rich-text copy, where a full HTML
+/// document (including `html` and `body` tags) is not appropriate.
+pub fn render_fragment(document: &PreviewDocument, options: &HtmlOptions<'_>) -> String {
     let mut body = String::new();
 
     for block in &document.blocks {
@@ -65,6 +63,15 @@ pub fn render_document(
         render_footnotes(document, options, &mut body);
     }
 
+    body
+}
+
+/// Renders a complete standalone HTML document.
+pub fn render_document(
+    document: &PreviewDocument,
+    options: &HtmlOptions<'_>,
+) -> Result<String, ExportError> {
+    let body = render_fragment(document, options);
     let css = css::stylesheet(options.theme, options.typography);
     let mut env = Environment::new();
     env.add_template("page", TEMPLATE)
@@ -292,13 +299,14 @@ fn render_inlines(inlines: &[Inline], options: &HtmlOptions<'_>, out: &mut Strin
     }
 }
 
-fn render_code(language: Option<&str>, code: &str, _options: &HtmlOptions<'_>, out: &mut String) {
+fn render_code(language: Option<&str>, code: &str, options: &HtmlOptions<'_>, out: &mut String) {
     let class = language
         .map(|language| format!(" class=\"language-{}\"", escape_html(language)))
         .unwrap_or_default();
     out.push_str(&format!("<pre class=\"mmd-code-block\"><code{class}>"));
 
-    let highlighted = language.and_then(|language| highlight_code(code, language));
+    let highlighted =
+        language.and_then(|language| highlight_code(code, language, options.theme.is_dark));
     match highlighted {
         Some(html) => out.push_str(&html),
         None => push_escaped(out, code),
@@ -307,11 +315,16 @@ fn render_code(language: Option<&str>, code: &str, _options: &HtmlOptions<'_>, o
     out.push_str("</code></pre>\n");
 }
 
-fn highlight_code(code: &str, language: &str) -> Option<String> {
+fn highlight_code(code: &str, language: &str, is_dark: bool) -> Option<String> {
     let syntax = SYNTAXES
         .find_syntax_by_token(language)
         .or_else(|| SYNTAXES.find_syntax_by_name(language))?;
-    let theme = THEMES.themes.get("base16-ocean.dark")?;
+    let theme_name = if is_dark {
+        "base16-ocean.dark"
+    } else {
+        "base16-ocean.light"
+    };
+    let theme = THEMES.themes.get(theme_name)?;
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut out = String::new();
 
@@ -556,5 +569,44 @@ mod tests {
 
         assert!(html.contains("mmd-footnotes"));
         assert!(html.contains("id=\"fn-a\""));
+    }
+
+    #[test]
+    fn output_is_standalone_and_has_no_remote_dependencies() {
+        let document = parser::parse(
+            "# Title\n\nText with a [link](https://example.com).\n\n```mermaid\nflowchart TD\nA --> B\n```\n",
+            0,
+        );
+        let html = render_document(&document, &options(None)).expect("render");
+
+        assert!(html.contains("<style>"));
+        assert!(!html.contains("<link rel="));
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("src=\"http://"));
+        assert!(!html.contains("src=\"https://"));
+        assert!(html.contains("<svg"));
+    }
+
+    #[test]
+    fn active_theme_and_typography_drive_the_exported_css() {
+        let document = parser::parse("# Title\n", 0);
+        let mut typography = Typography::preview_default();
+        typography.font_size = 21.0;
+        typography.max_width = 640.0;
+        let html = render_document(
+            &document,
+            &HtmlOptions {
+                theme: &MOCK_THEME,
+                typography: &typography,
+                base_dir: None,
+                title: "Title",
+                embed_images: true,
+            },
+        )
+        .expect("render");
+
+        assert!(html.contains(&css::css_color(MOCK_THEME.background)));
+        assert!(html.contains("21px"));
+        assert!(html.contains("640px"));
     }
 }

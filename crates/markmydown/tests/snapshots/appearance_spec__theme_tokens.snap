@@ -1,0 +1,12 @@
+---
+source: crates/markmydown/tests/appearance_spec.rs
+expression: summary
+---
+light: #ffffff / #1f2328 / #0969da
+dark: #0d1117 / #e6edf3 / #2f81f7
+sepia: #f4ecd8 / #3b3228 / #8a5a2b
+nord: #2e3440 / #eceff4 / #88c0d0
+solarized-light: #fdf6e3 / #073642 / #268bd2
+solarized-dark: #002b36 / #eee8d5 / #268bd2
+catppuccin-latte: #eff1f5 / #4c4f69 / #1e66f5
+catppuccin-mocha: #1e1e2e / #cdd6f4 / #89b4fa

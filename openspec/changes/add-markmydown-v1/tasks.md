@@ -61,27 +61,27 @@
 
 ## 5. Export
 
-- [ ] 5.1 Implement the theme token model and CSS generation; verify editor, preview, and export use the same tokens.
-- [ ] 5.2 Implement Markdown export with save dialog and `.md` extension handling; verify export, cancel, and missing extension.
-- [ ] 5.3 Implement standalone HTML export with embedded CSS, images, math, and Mermaid; verify the output opens offline and matches the active theme.
-- [ ] 5.4 Implement PDF export with `pdfrs` and embedded math/Mermaid SVG; verify page size, margins, long documents, and diagram rendering.
-- [ ] 5.5 Implement copy as HTML and plain text; verify paste into a rich-text editor and the plain-text fallback.
-- [ ] 5.6 Implement print using the PDF layout; verify the system dialog and cancellation.
-- [ ] 5.7 Implement export failure handling; verify unwritable and invalid destinations keep the document open.
-- [ ] 5.8 Add export consistency snapshots and tests; verify preview, HTML, and PDF contain the same headings, lists, links, code, math, and diagrams.
-- [ ] 5.9 Document export behavior and limitations in `docs/export.md`; verify the documented commands and scenarios.
+- [x] 5.1 Implement the theme token model and CSS generation; verify editor, preview, and export use the same tokens.
+- [x] 5.2 Implement Markdown export with save dialog and `.md` extension handling; verify export, cancel, and missing extension.
+- [x] 5.3 Implement standalone HTML export with embedded CSS, images, math, and Mermaid; verify the output opens offline and matches the active theme.
+- [x] 5.4 Implement PDF export with `pdfrs` and embedded math/Mermaid SVG; verify page size, margins, long documents, and diagram rendering.
+- [x] 5.5 Implement copy as HTML and plain text; verify paste into a rich-text editor and the plain-text fallback.
+- [x] 5.6 Implement print using the PDF layout; verify the system dialog and cancellation.
+- [x] 5.7 Implement export failure handling; verify unwritable and invalid destinations keep the document open.
+- [x] 5.8 Add export consistency snapshots and tests; verify preview, HTML, and PDF contain the same headings, lists, links, code, math, and diagrams.
+- [x] 5.9 Document export behavior and limitations in `docs/export.md`; verify the documented commands and scenarios.
 
 ## 6. Appearance, onboarding, and UI
 
-- [ ] 6.1 Implement the theme registry with light, dark, system, and gallery themes; verify theme switching, system following, and persistence.
-- [ ] 6.2 Implement theme preview on focus or hover and cancel-on-leave; verify the three scenarios in the appearance spec.
-- [ ] 6.3 Implement editor and preview typography settings independently; verify each change and reset.
-- [ ] 6.4 Implement settings persistence, corruption handling, and reset; verify restart, unreadable settings, and reset confirmation.
-- [ ] 6.5 Implement the welcome document and in-app cheat sheet; verify first launch, offline rendering, open, and dismiss.
-- [ ] 6.6 Implement quick open; verify fuzzy search and opening a document.
-- [ ] 6.7 Implement notifications and error dialogs; verify success and failure states.
-- [ ] 6.8 Add appearance and UI tests and snapshots; verify `cargo test` covers the scenarios in `specs/app-appearance/spec.md`.
-- [ ] 6.9 Document theme tokens and UI conventions in `docs/theme.md`; verify the document matches the implemented tokens.
+- [x] 6.1 Implement the theme registry with light, dark, system, and gallery themes; verify theme switching, system following, and persistence.
+- [x] 6.2 Implement theme preview on focus or hover and cancel-on-leave; verify the three scenarios in the appearance spec.
+- [x] 6.3 Implement editor and preview typography settings independently; verify each change and reset.
+- [x] 6.4 Implement settings persistence, corruption handling, and reset; verify restart, unreadable settings, and reset confirmation.
+- [x] 6.5 Implement the welcome document and in-app cheat sheet; verify first launch, offline rendering, open, and dismiss.
+- [x] 6.6 Implement quick open; verify fuzzy search and opening a document.
+- [x] 6.7 Implement notifications and error dialogs; verify success and failure states.
+- [x] 6.8 Add appearance and UI tests and snapshots; verify `cargo test` covers the scenarios in `specs/app-appearance/spec.md`.
+- [x] 6.9 Document theme tokens and UI conventions in `docs/theme.md`; verify the document matches the implemented tokens.
 
 ## 7. Desktop platform and packaging
 
@@ -89,16 +89,16 @@
 - [ ] 7.2 Configure `cargo-packager` for macOS, Windows, and Linux installers; verify install and uninstall on each platform.
 - [ ] 7.3 Implement update checks and installation via `self_update` and GitHub Releases; verify available, install, and offline scenarios.
 - [ ] 7.4 Add macOS signing and notarization plus Windows signing to CI; verify signed artifacts pass platform checks.
-- [ ] 7.5 Verify security and privacy behavior: no network on edit, no script execution, and update metadata only; record results.
-- [ ] 7.6 Implement local diagnostics logs and the open-log-folder action; verify log creation, folder opening, and no document content in logs.
+- [x] 7.5 Verify security and privacy behavior: no network on edit, no script execution, and update metadata only; record results.
+- [x] 7.6 Implement local diagnostics logs and the open-log-folder action; verify log creation, folder opening, and no document content in logs.
 - [ ] 7.7 Add a cross-platform release workflow that builds and uploads installers; verify artifacts for all three platforms.
 
 ## 8. Integration and release readiness
 
-- [ ] 8.1 Run an end-to-end smoke test: open a folder, edit, preview a table/math/Mermaid document, export HTML and PDF, restart, and recover a session; verify every step.
-- [ ] 8.2 Benchmark a 1 MB document: open under 200 ms, keystroke under 16 ms, preview update under 80 ms, and export time recorded; fix regressions above these thresholds.
-- [ ] 8.3 Audit keyboard navigation, IME, and RTL behavior; document gaps and verify the app remains usable without a mouse.
-- [ ] 8.4 Write the README with install, build, and usage instructions; verify the documented commands work from a clean checkout.
+- [x] 8.1 Run an end-to-end smoke test: open a folder, edit, preview a table/math/Mermaid document, export HTML and PDF, restart, and recover a session; verify every step.
+- [x] 8.2 Benchmark a 1 MB document: open under 200 ms, keystroke under 16 ms, preview update under 80 ms, and export time recorded; fix regressions above these thresholds.
+- [x] 8.3 Audit keyboard navigation, IME, and RTL behavior; document gaps and verify the app remains usable without a mouse.
+- [x] 8.4 Write the README with install, build, and usage instructions; verify the documented commands work from a clean checkout.
 - [ ] 8.5 Build release candidates for macOS, Windows, and Linux; verify version, signatures, file associations, and update checks.
 
 ## Workflow follow-up

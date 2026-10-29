@@ -1,0 +1,136 @@
+---
+source: crates/markmydown/tests/appearance_spec.rs
+expression: html
+---
+<h1>Markdown cheat sheet</h1>
+<h2>Text</h2>
+<table>
+<thead><tr>
+<th style="text-align:left">Syntax</th>
+<th style="text-align:left">Result</th>
+</tr></thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>**bold**</code></td>
+<td style="text-align:left"><strong>bold</strong></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>*italic*</code></td>
+<td style="text-align:left"><em>italic</em></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>~~strike~~</code></td>
+<td style="text-align:left"><del>strike</del></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>`code`</code></td>
+<td style="text-align:left"><code>code</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>[text](https://example.com)</code></td>
+<td style="text-align:left">link</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>![alt](image.png)</code></td>
+<td style="text-align:left">image</td>
+</tr>
+</tbody>
+</table>
+<h2>Blocks</h2>
+<pre class="mmd-code-block"><code class="language-markdown"><span style="color:#8fa1b3">#</span><span style="color:#4f5b66"> </span><span style="color:#8fa1b3">Heading 1</span><span style="color:#4f5b66">
+</span><span style="color:#8fa1b3">##</span><span style="color:#4f5b66"> </span><span style="color:#8fa1b3">Heading 2</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">
+</span><span style="color:#bf616a">-</span><span style="color:#bf616a"> </span><span style="color:#bf616a">bullet
+</span><span style="color:#bf616a">1</span><span style="color:#bf616a">.</span><span style="color:#bf616a"> numbered
+</span><span style="color:#bf616a">-</span><span style="color:#bf616a"> [ ] task
+</span><span style="color:#bf616a">-</span><span style="color:#bf616a"> [x] done
+</span><span style="color:#bf616a">
+</span><span style="color:#d08770">&gt;</span><span style="color:#d08770"> quote
+</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">```</span><span style="color:#d08770">rust</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">fn main() {}
+</span><span style="color:#4f5b66">```
+</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">$$
+</span><span style="color:#4f5b66">E = mc^2
+</span><span style="color:#4f5b66">$$
+</span></code></pre>
+<h2>Editor shortcuts</h2>
+<table>
+<thead><tr>
+<th style="text-align:left">Shortcut</th>
+<th style="text-align:left">Action</th>
+</tr></thead>
+<tbody>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+S</td>
+<td style="text-align:left">Save</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+P</td>
+<td style="text-align:left">Quick open</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+F</td>
+<td style="text-align:left">Find</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+H</td>
+<td style="text-align:left">Replace</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+,</td>
+<td style="text-align:left">Settings</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+/</td>
+<td style="text-align:left">Cheat sheet</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+B</td>
+<td style="text-align:left">Bold</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+I</td>
+<td style="text-align:left">Italic</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+K</td>
+<td style="text-align:left">Link</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+1…6</td>
+<td style="text-align:left">Heading level</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+Shift+8</td>
+<td style="text-align:left">Bullet list</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+Shift+7</td>
+<td style="text-align:left">Numbered list</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+Shift+9</td>
+<td style="text-align:left">Task list</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+Shift+.</td>
+<td style="text-align:left">Quote</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+`</td>
+<td style="text-align:left">Inline code</td>
+</tr>
+<tr>
+<td style="text-align:left">Cmd/Ctrl+Shift+`</td>
+<td style="text-align:left">Code block</td>
+</tr>
+<tr>
+<td style="text-align:left">Tab / Shift+Tab</td>
+<td style="text-align:left">Indent / outdent</td>
+</tr>
+</tbody>
+</table>
+<h2>Layout and focus</h2>
+<p>Use the toolbar to switch between Editor, Split, Preview, and Read. Focus mode dims everything except the current line and keeps the caret centered.</p>

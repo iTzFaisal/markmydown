@@ -159,11 +159,34 @@ impl Settings {
         }
         self.autosave_ms = self.autosave_ms.clamp(250, 30_000);
         self.preview_debounce_ms = self.preview_debounce_ms.clamp(30, 2_000);
+        if !matches!(self.page_size.as_str(), "letter" | "a4") {
+            self.page_size = String::from("letter");
+        }
         self.page_margin = self.page_margin.clamp(18.0, 144.0);
         if !self.split_ratio.is_finite() {
             self.split_ratio = 0.5;
         }
         self.split_ratio = self.split_ratio.clamp(0.2, 0.8);
+        validate_typography(&mut self.editor_typography, "SF Mono", 8.0, 32.0);
+        validate_typography(&mut self.preview_typography, "Georgia", 9.0, 40.0);
+    }
+}
+
+fn validate_typography(typography: &mut Typography, default_family: &str, min: f32, max: f32) {
+    if !typography.font_size.is_finite() {
+        typography.font_size = min;
+    }
+    typography.font_size = typography.font_size.clamp(min, max);
+    if !typography.line_height.is_finite() {
+        typography.line_height = 1.5;
+    }
+    typography.line_height = typography.line_height.clamp(1.0, 2.5);
+    if !typography.max_width.is_finite() {
+        typography.max_width = 0.0;
+    }
+    typography.max_width = typography.max_width.clamp(0.0, 2_400.0);
+    if typography.font_family.trim().is_empty() {
+        typography.font_family = default_family.to_string();
     }
 }
 
@@ -256,6 +279,7 @@ mod tests {
             theme: String::from("missing-theme"),
             layout: String::from("diagonal"),
             autosave_ms: 10,
+            page_size: String::from("legal"),
             page_margin: 999.0,
             split_ratio: 9.0,
             ..Settings::default()
@@ -266,6 +290,7 @@ mod tests {
         assert_eq!(settings.theme, "system");
         assert_eq!(settings.layout, "side-by-side");
         assert_eq!(settings.autosave_ms, 250);
+        assert_eq!(settings.page_size, "letter");
         assert_eq!(settings.page_margin, 144.0);
         assert!((settings.split_ratio - 0.8).abs() < f32::EPSILON);
     }
@@ -280,5 +305,35 @@ mod tests {
 
         assert_eq!(settings.recent_workspaces.len(), 10);
         assert_eq!(settings.recent_workspaces[0], PathBuf::from("/tmp/3"));
+    }
+
+    #[test]
+    fn typography_values_are_clamped_and_defaulted() {
+        let mut settings = Settings {
+            editor_typography: Typography {
+                font_family: String::new(),
+                font_size: 2.0,
+                line_height: 9.0,
+                max_width: 9_000.0,
+            },
+            preview_typography: Typography {
+                font_family: String::from("  "),
+                font_size: 99.0,
+                line_height: 0.1,
+                max_width: -10.0,
+            },
+            ..Settings::default()
+        };
+
+        settings.validate();
+
+        assert_eq!(settings.editor_typography.font_family, "SF Mono");
+        assert_eq!(settings.editor_typography.font_size, 8.0);
+        assert_eq!(settings.editor_typography.line_height, 2.5);
+        assert_eq!(settings.editor_typography.max_width, 2_400.0);
+        assert_eq!(settings.preview_typography.font_family, "Georgia");
+        assert_eq!(settings.preview_typography.font_size, 40.0);
+        assert_eq!(settings.preview_typography.line_height, 1.0);
+        assert_eq!(settings.preview_typography.max_width, 0.0);
     }
 }

@@ -3,5 +3,6 @@ fn main() -> iced::Result {
         eprintln!("markmydown: could not initialize logging: {error}");
     }
 
-    markmydown::app::run()
+    let documents = markmydown::config::launch::document_paths(std::env::args_os());
+    markmydown::app::run_with_paths(documents)
 }

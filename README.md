@@ -1,0 +1,133 @@
+# markmydown
+
+A fast, native, offline-first Markdown workbench built in Rust with Iced. Open a
+local folder, edit plain Markdown files, preview GFM with math and Mermaid, and
+export portable Markdown, HTML, or PDF. No webview, no accounts, no cloud
+storage.
+
+## Features
+
+- Local-folder workspace with a file tree, tabs, autosave, atomic writes,
+  external-change detection, conflict handling, crash recovery, and session
+  restore.
+- Native editor with Markdown syntax highlighting, formatting actions, smart
+  lists, find/replace, outline, status bar, focus mode, and editor/split/
+  preview/read layouts.
+- Native preview with GFM, tables, task lists, footnotes, definition lists,
+  sub/sup, mark, emoji, code highlighting, block math, Mermaid diagrams,
+  relative images, sanitized HTML, scroll sync, and read mode.
+- Theme gallery with light, dark, system-following, Sepia, Nord, Solarized, and
+  Catppuccin themes, plus independent editor and preview typography.
+- Welcome document, searchable cheat sheet, fuzzy quick open, notifications,
+  and local diagnostics.
+- Export to Markdown, standalone HTML, and paginated PDF; copy as rich HTML or
+  plain text; print through the system PDF viewer.
+- No network required for editing or export. Update checks are explicit and
+  request release metadata only.
+
+## Requirements
+
+- Rust stable with edition 2024 support (Rust 1.85 or newer).
+- macOS 12+, Windows 10/11, or a Linux desktop with Wayland or X11.
+- Linux build packages: `libasound2-dev`, `libfontconfig1-dev`,
+  `libgl1-mesa-dev`, `libwayland-dev`, `libx11-dev`, `libxcb1-dev`,
+  `libxcursor-dev`, `libxi-dev`, `libxinerama-dev`, `libxkbcommon-dev`,
+  `libxrandr-dev`, and `pkg-config`.
+
+## Build and run
+
+```bash
+git clone https://github.com/markmydown/markmydown.git
+cd markmydown
+cargo build -p markmydown --release
+cargo run -p markmydown --release
+```
+
+Open a folder with the toolbar or sidebar, or pass a folder or document on the
+command line:
+
+```bash
+markmydown ~/notes
+markmydown ~/notes/today.md ~/notes/ideas.markdown
+```
+
+Multiple file paths open as tabs. File-association launches from Finder,
+Explorer, or the Linux file manager use the same path handling.
+
+### Tests
+
+```bash
+cargo test -p markmydown
+cargo test -p markmydown --test end_to_end_spec
+cargo test -p markmydown --release --test performance_spec -- --ignored --nocapture
+```
+
+CI runs formatting, clippy, tests, and a build on macOS, Windows, and Ubuntu.
+The performance benchmark is ignored by default because it is timing-sensitive;
+see [`docs/performance.md`](docs/performance.md).
+
+## Usage
+
+- **Open a folder** to create a workspace. Supported files are `.md`,
+  `.markdown`, `.mdown`, and `.txt`.
+- **Edit** on the left; the preview updates after a short debounce. Use the
+  toolbar or shortcuts to switch layouts.
+- **Save** with `Cmd/Ctrl+S`; autosave runs after an idle interval. External
+  edits reload clean tabs and show a conflict bar for dirty ones.
+- **Quick open** with `Cmd/Ctrl+P`; type to fuzzy-search and press Enter.
+- **Settings** with `Cmd/Ctrl+,` for themes and editor/preview typography.
+- **Cheat sheet** with `Cmd/Ctrl+/` for Markdown syntax and shortcuts.
+- **Export** with the toolbar: Markdown, standalone HTML, or PDF. HTML embeds
+  the active theme, local images, math, and diagrams. PDF uses the configured
+  page size and margins.
+- **Copy** as rich HTML or plain text. **Print** hands the PDF layout to the
+  system PDF viewer.
+- **Recover** unsaved work from the prompt shown after an unexpected exit.
+
+## Project layout
+
+```text
+crates/markmydown/src/
+  app.rs          App state, messages, update, view
+  workspace/      tree, documents, tabs, watcher, recovery, session
+  editor/         adapter over the vendored editor and Markdown behaviors
+  preview/        comrak parser, model, renderer, math, Mermaid, cache
+  export/         Markdown, HTML, PDF, clipboard, print
+  theme/          tokens, gallery registry, CSS generation
+  ui/             toolbar, sidebar, settings, palette, dialogs, status
+  config/         paths, settings, logging, launch paths, updates
+```
+
+## Packaging
+
+`cargo-packager` produces the platform installers and file associations:
+
+```bash
+cargo install cargo-packager --locked
+cd crates/markmydown
+cargo packager --release
+```
+
+Artifacts are written to `target/packager`. The release workflow
+(`.github/workflows/release.yml`) builds macOS, Windows, and Linux packages,
+signs them when the platform secrets are configured, verifies signatures, and
+publishes them to GitHub Releases. macOS uses Developer ID signing plus
+notarization; Windows uses `signtool` with a certificate thumbprint.
+
+Unsigned local builds are still fully functional. Signed release verification
+requires the platform signing credentials described in the workflow file.
+
+## Documentation
+
+- [`docs/workspace.md`](docs/workspace.md) — file safety, tabs, sessions
+- [`docs/editor.md`](docs/editor.md) — editor adapter, shortcuts, vendored patch
+- [`docs/preview.md`](docs/preview.md) — preview model and extensions
+- [`docs/export.md`](docs/export.md) — export, copy, print, failures
+- [`docs/theme.md`](docs/theme.md) — theme tokens, settings, UI conventions
+- [`docs/performance.md`](docs/performance.md) — benchmark results
+- [`docs/accessibility.md`](docs/accessibility.md) — keyboard, IME, RTL, gaps
+- [`docs/security.md`](docs/security.md) — security and privacy audit
+
+## License
+
+MIT.

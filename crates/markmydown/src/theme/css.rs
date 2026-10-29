@@ -274,4 +274,52 @@ mod tests {
         let css = stylesheet(&ThemeTokens::light(), &typography);
         assert!(css.contains("max-width: none"));
     }
+
+    #[test]
+    fn stylesheet_exports_every_theme_token() {
+        let tokens = ThemeTokens::nord();
+        let css = stylesheet(&tokens, &Typography::preview_default());
+
+        for token in [
+            tokens.background,
+            tokens.surface,
+            tokens.surface_raised,
+            tokens.text,
+            tokens.muted,
+            tokens.accent,
+            tokens.border,
+            tokens.selection,
+            tokens.code_background,
+            tokens.code_text,
+            tokens.link,
+            tokens.heading,
+            tokens.quote,
+            tokens.success,
+            tokens.warning,
+            tokens.error,
+        ] {
+            assert!(
+                css.contains(&css_color(token)),
+                "stylesheet is missing {}",
+                css_color(token)
+            );
+        }
+    }
+
+    #[test]
+    fn every_gallery_theme_produces_a_stylesheet() {
+        for theme in crate::theme::registry::all() {
+            let css = stylesheet(&theme.tokens, &Typography::preview_default());
+            assert!(
+                css.contains(&css_color(theme.tokens.background)),
+                "{} lost its background",
+                theme.id
+            );
+            assert!(
+                css.contains(&css_color(theme.tokens.text)),
+                "{} lost its text color",
+                theme.id
+            );
+        }
+    }
 }

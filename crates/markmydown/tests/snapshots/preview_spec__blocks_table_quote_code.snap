@@ -23,7 +23,7 @@ expression: "html_body(&document, None)"
 </tr>
 </tbody>
 </table>
-<pre class="mmd-code-block"><code class="language-rust"><span style="color:#b48ead">fn</span><span style="color:#c0c5ce"> </span><span style="color:#8fa1b3">main</span><span style="color:#c0c5ce">(</span><span style="color:#c0c5ce">)</span><span style="color:#c0c5ce"> </span><span style="color:#c0c5ce">{</span><span style="color:#c0c5ce">
-</span><span style="color:#c0c5ce">    </span><span style="color:#c0c5ce">println!</span><span style="color:#c0c5ce">(</span><span style="color:#c0c5ce">&quot;</span><span style="color:#a3be8c">hi</span><span style="color:#c0c5ce">&quot;</span><span style="color:#c0c5ce">)</span><span style="color:#c0c5ce">;</span><span style="color:#c0c5ce">
-</span><span style="color:#c0c5ce">}</span><span style="color:#c0c5ce">
+<pre class="mmd-code-block"><code class="language-rust"><span style="color:#b48ead">fn</span><span style="color:#4f5b66"> </span><span style="color:#8fa1b3">main</span><span style="color:#4f5b66">(</span><span style="color:#4f5b66">)</span><span style="color:#4f5b66"> </span><span style="color:#4f5b66">{</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">    </span><span style="color:#4f5b66">println!</span><span style="color:#4f5b66">(</span><span style="color:#4f5b66">&quot;</span><span style="color:#a3be8c">hi</span><span style="color:#4f5b66">&quot;</span><span style="color:#4f5b66">)</span><span style="color:#4f5b66">;</span><span style="color:#4f5b66">
+</span><span style="color:#4f5b66">}</span><span style="color:#4f5b66">
 </span></code></pre>

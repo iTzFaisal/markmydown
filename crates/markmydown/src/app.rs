@@ -5,19 +5,26 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use iced::widget::{Space, button, column, container, pane_grid, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, pane_grid, row, scrollable, text};
 use iced::{Element, Length, Subscription, Task};
 use iced_code_editor::Message as EditorMessage;
 
 use crate::config::paths::AppPaths;
 use crate::config::settings::Settings;
+use crate::config::updates::{self, UpdateInfo};
 use crate::editor::markdown::FormatAction;
 use crate::editor::{EditorPane, message_may_edit};
+use crate::export::pdf::{PageSize, PdfOptions};
+use crate::export::{self, ExportFailure, ExportFormat, ExportOutcome, ExportRequest};
+use crate::preview::model::PreviewDocument;
 use crate::preview::render as preview_render;
 use crate::preview::sync as preview_sync;
 use crate::theme::registry;
-use crate::theme::tokens::ThemeTokens;
-use crate::ui::{dialogs, outline, search as search_ui, sidebar, status};
+use crate::theme::tokens::{self, ThemeTokens};
+use crate::ui::{
+    dialogs, notifications, outline, palette, search as search_ui, settings as settings_ui,
+    sidebar, status, welcome,
+};
 use crate::workspace::document::{Cursor, ExternalChange};
 use crate::workspace::recovery::RecoveryRecord;
 use crate::workspace::session::Session;
@@ -83,6 +90,29 @@ impl LayoutMode {
     }
 }
 
+/// A built-in document shown over the workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InfoOverlay {
+    Welcome,
+    CheatSheet,
+}
+
+impl InfoOverlay {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Welcome => "Welcome to markmydown",
+            Self::CheatSheet => "Markdown cheat sheet",
+        }
+    }
+
+    pub fn source(self) -> &'static str {
+        match self {
+            Self::Welcome => welcome::WELCOME,
+            Self::CheatSheet => welcome::CHEAT_SHEET,
+        }
+    }
+}
+
 /// Which view a resizable pane contains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneKind {
@@ -105,6 +135,8 @@ pub enum InputAction {
 pub enum ConfirmAction {
     Delete { path: PathBuf },
     CloseTab { id: u64 },
+    RetryExport { format: ExportFormat },
+    ResetSettings,
 }
 
 /// A modal dialog.
@@ -136,6 +168,7 @@ pub struct App {
     pub status: String,
     pub status_is_error: bool,
     pub tokens: ThemeTokens,
+    pub system_dark: bool,
     pub layout: LayoutMode,
     pub sidebar_visible: bool,
     pub outline_visible: bool,
@@ -146,6 +179,15 @@ pub struct App {
     pub dialog: Option<Dialog>,
     pub compare: Option<Compare>,
     pub recovery: Vec<RecoveryRecord>,
+    pub settings_open: bool,
+    pub preview_theme: Option<String>,
+    preview_theme_backup: Option<ThemeTokens>,
+    pub update_state: settings_ui::UpdateState,
+    pub quick_open: Option<palette::QuickOpen>,
+    pub notifications: notifications::NotificationCenter,
+    pub info_overlay: Option<InfoOverlay>,
+    info_preview: Option<PreviewDocument>,
+    info_scroll_id: iced::widget::Id,
     editor: Option<EditorPane>,
     editor_doc: Option<u64>,
     editor_needs_position: bool,
@@ -167,54 +209,123 @@ impl App {
     /// Loads settings, restores the previous session, and prepares the first
     /// recovery prompt.
     pub fn boot() -> Self {
+        Self::boot_with_paths(Vec::new())
+    }
+
+    /// Boots with documents or a folder passed by the operating system.
+    ///
+    /// Launch paths take precedence over the restored session. The first
+    /// folder, or the parent of the first file, becomes the workspace root;
+    /// every file becomes a tab.
+    pub fn boot_with_paths(initial: Vec<PathBuf>) -> Self {
         let paths = AppPaths::discover().unwrap_or_else(|_| {
             AppPaths::with_base(std::env::temp_dir().join("markmydown-fallback"))
         });
+        Self::boot_at_paths(paths, initial)
+    }
+
+    fn boot_at_paths(paths: AppPaths, initial: Vec<PathBuf>) -> Self {
         let _ = paths.ensure();
 
         let loaded = Settings::load(&paths.settings_file());
-        let mut settings = loaded.settings;
+        let mut settings = loaded.settings.clone();
         settings.validate();
 
         let mut workspace = WorkspaceState::new(paths.session_file(), paths.recovery_dir());
         let mut status = String::from("Ready");
         let mut status_is_error = false;
-
-        let session = Session::load(&paths.session_file());
-        let mut restored = workspace.is_open();
-        if session.workspace_root.is_some() {
-            match workspace.restore_session(&session) {
-                Ok(_) => restored = workspace.is_open(),
-                Err(error) => {
-                    log::warn!("could not restore session: {error}");
-                    status = format!("Could not restore the previous session: {error}");
-                    status_is_error = true;
-                }
-            }
+        if let Some(warning) = loaded.warning.as_deref() {
+            log::warn!("{warning}");
+            status = warning.to_string();
+            status_is_error = true;
+        }
+        if let Some(backup) = loaded.backup.as_ref() {
+            log::warn!("unreadable settings preserved at {}", backup.display());
         }
 
-        if !restored
-            && let Some(root) = settings.last_workspace.clone()
-            && root.is_dir()
-        {
-            match workspace.open_folder(&root) {
-                Ok(()) => {
-                    settings.add_recent_workspace(root);
-                    persisted_settings(&settings, &paths);
+        if initial.is_empty() {
+            let session = Session::load(&paths.session_file());
+            let mut restored = workspace.is_open();
+            if session.workspace_root.is_some() {
+                match workspace.restore_session(&session) {
+                    Ok(_) => restored = workspace.is_open(),
+                    Err(error) => {
+                        log::warn!("could not restore session: {error}");
+                        status = format!("Could not restore the previous session: {error}");
+                        status_is_error = true;
+                    }
                 }
-                Err(error) => {
-                    status = format!("Could not open the last workspace: {error}");
-                    status_is_error = true;
+            }
+
+            if !restored
+                && let Some(root) = settings.last_workspace.clone()
+                && root.is_dir()
+            {
+                match workspace.open_folder(&root) {
+                    Ok(()) => {
+                        settings.add_recent_workspace(root);
+                        persisted_settings(&settings, &paths);
+                    }
+                    Err(error) => {
+                        status = format!("Could not open the last workspace: {error}");
+                        status_is_error = true;
+                    }
+                }
+            }
+        } else {
+            if let Some(root) = crate::config::launch::launch_root(&initial) {
+                match workspace.open_folder(&root) {
+                    Ok(()) => {
+                        settings.add_recent_workspace(root);
+                        persisted_settings(&settings, &paths);
+                        let mut first_id = None;
+                        for path in &initial {
+                            if crate::config::launch::is_folder(path) {
+                                continue;
+                            }
+                            match workspace.open_document(path) {
+                                Ok(id) => {
+                                    first_id.get_or_insert(id);
+                                }
+                                Err(error) => {
+                                    log::warn!(
+                                        "could not open launch document {}: {error}",
+                                        path.display()
+                                    );
+                                    status = format!("Could not open {}: {error}", path.display());
+                                    status_is_error = true;
+                                }
+                            }
+                        }
+                        if let Some(id) = first_id {
+                            workspace.activate(id);
+                        }
+                    }
+                    Err(error) => {
+                        status = format!("Could not open {}: {error}", root.display());
+                        status_is_error = true;
+                    }
                 }
             }
         }
 
         let recovery = workspace.pending_recovery();
         let layout = LayoutMode::from_settings(&settings.layout);
-        let tokens = registry::resolve(&settings.theme, false).tokens.clone();
+        let system_dark = tokens::system_is_dark();
+        let tokens = registry::resolve(&settings.theme, system_dark)
+            .tokens
+            .clone();
         let selected = workspace
             .active_document()
             .map(|document| document.path.clone());
+
+        let first_launch = !settings.onboarding_seen && !workspace.is_open();
+        if first_launch {
+            settings.onboarding_seen = true;
+            persisted_settings(&settings, &paths);
+        }
+        let info_overlay = first_launch.then_some(InfoOverlay::Welcome);
+        let info_preview = info_overlay.map(|kind| crate::preview::parser::parse(kind.source(), 0));
 
         let panes = new_pane_state(settings.split_ratio);
 
@@ -225,6 +336,7 @@ impl App {
             status,
             status_is_error,
             tokens,
+            system_dark,
             layout,
             sidebar_visible: true,
             outline_visible: true,
@@ -235,6 +347,15 @@ impl App {
             dialog: None,
             compare: None,
             recovery,
+            settings_open: false,
+            preview_theme: None,
+            preview_theme_backup: None,
+            update_state: settings_ui::UpdateState::Idle,
+            quick_open: None,
+            notifications: notifications::NotificationCenter::default(),
+            info_overlay,
+            info_preview,
+            info_scroll_id: iced::widget::Id::new("markmydown-info"),
             editor: None,
             editor_doc: None,
             editor_needs_position: true,
@@ -275,10 +396,18 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
+        let mut subscriptions = vec![
             iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
             iced::keyboard::listen().filter_map(shortcut_message),
-        ])
+            iced::system::theme_changes()
+                .map(|mode| Message::SystemThemeChanged(mode == iced::theme::Mode::Dark)),
+        ];
+
+        if self.quick_open.is_some() {
+            subscriptions.push(iced::keyboard::listen().filter_map(quick_open_key_message));
+        }
+
+        Subscription::batch(subscriptions)
     }
 
     fn root(&self) -> Option<&Path> {
@@ -333,6 +462,339 @@ impl App {
         log::warn!("{message}");
         self.status = message;
         self.status_is_error = true;
+    }
+
+    fn notify_success(&mut self, message: impl Into<String>) {
+        self.notifications
+            .push(notifications::NotificationKind::Success, message);
+    }
+
+    fn notify_error(&mut self, message: impl Into<String>) {
+        self.notifications
+            .push(notifications::NotificationKind::Error, message);
+    }
+
+    /// Re-applies the current tokens and editor typography to the editor.
+    fn apply_editor_theme(&mut self) {
+        let tokens = self.tokens.clone();
+        let typography = self.settings.editor_typography.clone();
+        if let Some(editor) = &mut self.editor {
+            editor.apply_theme(&tokens, &typography);
+        }
+    }
+
+    fn adopt_theme(&mut self, id: &str) {
+        self.tokens = registry::resolve(id, self.system_dark).tokens.clone();
+        self.apply_editor_theme();
+    }
+
+    /// Previews a theme without persisting it. The applied theme is restored
+    /// when the pointer leaves the picker or the panel closes.
+    fn preview_theme(&mut self, id: Option<String>) {
+        match id {
+            Some(id) => {
+                if self.preview_theme.as_deref() == Some(id.as_str()) {
+                    return;
+                }
+                if self.preview_theme_backup.is_none() {
+                    self.preview_theme_backup = Some(self.tokens.clone());
+                }
+                self.preview_theme = Some(id.clone());
+                self.tokens = registry::resolve(&id, self.system_dark).tokens.clone();
+                self.apply_editor_theme();
+            }
+            None => self.cancel_theme_preview(),
+        }
+    }
+
+    fn cancel_theme_preview(&mut self) {
+        if let Some(tokens) = self.preview_theme_backup.take() {
+            self.tokens = tokens;
+            self.apply_editor_theme();
+        }
+        self.preview_theme = None;
+    }
+
+    fn select_theme(&mut self, id: String) {
+        if registry::get(&id).is_none() && id != "system" {
+            self.set_error(format!("Unknown theme: {id}"));
+            return;
+        }
+
+        self.settings.theme = id;
+        self.settings.validate();
+        self.preview_theme = None;
+        self.preview_theme_backup = None;
+        let theme = self.settings.theme.clone();
+        self.adopt_theme(&theme);
+        persisted_settings(&self.settings, &self.paths);
+        let name = registry::resolve(&theme, self.system_dark).name;
+        self.set_status(format!("Theme: {name}"));
+        self.notify_success(format!("Applied the {name} theme."));
+    }
+
+    fn system_theme_changed(&mut self, dark: bool) {
+        self.system_dark = dark;
+        if self.settings.theme == "system" && self.preview_theme.is_none() {
+            self.adopt_theme("system");
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.settings_open = true;
+        self.set_status("Settings");
+    }
+
+    fn close_settings(&mut self) {
+        self.cancel_theme_preview();
+        self.settings_open = false;
+        self.settings.validate();
+        self.apply_editor_theme();
+        persisted_settings(&self.settings, &self.paths);
+    }
+
+    fn handle_settings(&mut self, message: settings_ui::Message) -> Task<Message> {
+        match message {
+            settings_ui::Message::SelectTheme(id) => self.select_theme(id),
+            settings_ui::Message::PreviewTheme(id) => self.preview_theme(id),
+            settings_ui::Message::EditorFontFamily(value) => {
+                self.settings.editor_typography.font_family = value;
+                self.apply_editor_theme();
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::EditorFontSize(value) => {
+                self.settings.editor_typography.font_size = value;
+                self.apply_editor_theme();
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::EditorLineHeight(value) => {
+                self.settings.editor_typography.line_height = value;
+                self.apply_editor_theme();
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::PreviewFontFamily(value) => {
+                self.settings.preview_typography.font_family = value;
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::PreviewFontSize(value) => {
+                self.settings.preview_typography.font_size = value;
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::PreviewLineHeight(value) => {
+                self.settings.preview_typography.line_height = value;
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::PreviewMaxWidth(value) => {
+                self.settings.preview_typography.max_width = value;
+                persisted_settings(&self.settings, &self.paths);
+            }
+            settings_ui::Message::ResetEditorTypography => {
+                self.settings.editor_typography =
+                    crate::theme::tokens::Typography::editor_default();
+                self.apply_editor_theme();
+                persisted_settings(&self.settings, &self.paths);
+                self.notify_success("Reset the editor typography.");
+            }
+            settings_ui::Message::ResetPreviewTypography => {
+                self.settings.preview_typography =
+                    crate::theme::tokens::Typography::preview_default();
+                persisted_settings(&self.settings, &self.paths);
+                self.notify_success("Reset the preview typography.");
+            }
+            settings_ui::Message::ResetAll => {
+                self.dialog = Some(Dialog::Confirm {
+                    action: ConfirmAction::ResetSettings,
+                    confirm: dialogs::Confirm {
+                        title: String::from("Reset all settings"),
+                        message: String::from(
+                            "Restore the theme, typography, layout, and preferences to their defaults?",
+                        ),
+                        confirm_label: String::from("Reset settings"),
+                    },
+                });
+            }
+            settings_ui::Message::CheckForUpdates => return self.check_for_updates(),
+            settings_ui::Message::InstallUpdate => return self.install_update(),
+            settings_ui::Message::OpenLogs => return self.open_logs(),
+            settings_ui::Message::Close => self.close_settings(),
+        }
+
+        Task::none()
+    }
+
+    fn check_for_updates(&mut self) -> Task<Message> {
+        self.update_state = settings_ui::UpdateState::Checking;
+        Task::perform(
+            async { updates::check().map_err(|error| error.to_string()) },
+            Message::UpdateCheckFinished,
+        )
+    }
+
+    fn install_update(&mut self) -> Task<Message> {
+        let version = match &self.update_state {
+            settings_ui::UpdateState::Available(info) => info.version.clone(),
+            _ => String::from("latest"),
+        };
+        self.update_state = settings_ui::UpdateState::Installing(version);
+        Task::perform(
+            async { updates::install_and_restart().map_err(|error| error.to_string()) },
+            Message::UpdateInstallFinished,
+        )
+    }
+
+    fn update_check_finished(
+        &mut self,
+        result: Result<Option<UpdateInfo>, String>,
+    ) -> Task<Message> {
+        match result {
+            Ok(Some(info)) => {
+                self.update_state = settings_ui::UpdateState::Available(info.clone());
+                self.set_status(format!("markmydown {} is available.", info.version));
+                self.notify_success(format!("Version {} is available.", info.version));
+            }
+            Ok(None) => {
+                self.update_state = settings_ui::UpdateState::UpToDate;
+                self.set_status("markmydown is up to date.");
+                self.notify_success("markmydown is up to date.");
+            }
+            Err(message) => {
+                self.update_state = settings_ui::UpdateState::Error(message.clone());
+                self.set_error(format!("Could not check for updates: {message}"));
+                self.notify_error(format!("Update check failed: {message}"));
+            }
+        }
+
+        Task::none()
+    }
+
+    fn update_install_finished(&mut self, result: Result<String, String>) -> Task<Message> {
+        match result {
+            Ok(version) => {
+                self.set_status(format!("Installed {version}."));
+                iced::exit()
+            }
+            Err(message) => {
+                self.update_state = settings_ui::UpdateState::Error(message.clone());
+                self.set_error(format!("Could not install the update: {message}"));
+                self.notify_error(format!("Update install failed: {message}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn open_logs(&mut self) -> Task<Message> {
+        let directory = self.paths.log_dir();
+        match open::that(&directory) {
+            Ok(()) => self.set_status(format!("Opened {}", directory.display())),
+            Err(error) => {
+                self.set_error(format!("Could not open {}: {error}", directory.display()))
+            }
+        }
+        Task::none()
+    }
+
+    fn reset_settings(&mut self) {
+        self.preview_theme = None;
+        self.preview_theme_backup = None;
+        self.settings.reset();
+        self.settings.validate();
+        self.system_dark = tokens::system_is_dark();
+        let theme = self.settings.theme.clone();
+        self.tokens = registry::resolve(&theme, self.system_dark).tokens.clone();
+        self.layout = LayoutMode::from_settings(&self.settings.layout);
+        self.sidebar_visible = self.settings.sidebar_visible;
+        self.outline_visible = self.settings.outline_visible;
+        self.focus_mode = self.settings.focus_mode;
+        self.panes = new_pane_state(self.settings.split_ratio);
+        if let Some(editor) = &mut self.editor {
+            editor.set_focus_mode(self.focus_mode);
+        }
+        self.apply_editor_theme();
+        self.settings_open = false;
+        persisted_settings(&self.settings, &self.paths);
+        self.set_status("Settings reset to defaults.");
+        self.notify_success("All settings were reset.");
+    }
+
+    fn open_quick_open(&mut self) -> Task<Message> {
+        let Some(root) = self.root().map(Path::to_path_buf) else {
+            self.set_error("Open a folder before using Quick Open.");
+            return Task::none();
+        };
+        let Some(tree) = self.workspace.tree() else {
+            self.set_error("Open a folder before using Quick Open.");
+            return Task::none();
+        };
+        let entries = palette::entries_from_tree(&root, tree);
+        if entries.is_empty() {
+            self.set_error("This folder has no Markdown documents.");
+            return Task::none();
+        }
+
+        self.quick_open = Some(palette::QuickOpen::new(entries));
+        iced::widget::operation::focus(palette::input_id())
+    }
+
+    fn handle_quick_open(&mut self, message: palette::Message) -> Task<Message> {
+        match message {
+            palette::Message::QueryChanged(query) => {
+                if let Some(quick) = &mut self.quick_open {
+                    quick.set_query(query);
+                }
+                Task::none()
+            }
+            palette::Message::Move(delta) => {
+                if let Some(quick) = &mut self.quick_open {
+                    quick.move_selection(delta);
+                }
+                Task::none()
+            }
+            palette::Message::Accept => {
+                let path = self
+                    .quick_open
+                    .as_ref()
+                    .and_then(|quick| quick.selected_entry())
+                    .map(|entry| entry.path.clone());
+                self.quick_open = None;
+                match path {
+                    Some(path) => self.open_file(path),
+                    None => Task::none(),
+                }
+            }
+            palette::Message::Open(path) => {
+                self.quick_open = None;
+                self.open_file(path)
+            }
+            palette::Message::Close => {
+                self.quick_open = None;
+                Task::none()
+            }
+        }
+    }
+
+    fn open_info(&mut self, kind: InfoOverlay) -> Task<Message> {
+        self.info_preview = Some(crate::preview::parser::parse(kind.source(), 0));
+        self.info_overlay = Some(kind);
+        Task::none()
+    }
+
+    fn close_info(&mut self) {
+        self.info_overlay = None;
+        self.info_preview = None;
+    }
+
+    fn handle_info_preview(&mut self, message: preview_render::Message) -> Task<Message> {
+        match message {
+            preview_render::Message::LinkClicked(url) => self.activate_preview_link(url),
+            preview_render::Message::CopyCode(code) => {
+                match crate::export::clipboard::copy_text(&code) {
+                    Ok(()) => self.set_status("Copied code to the clipboard."),
+                    Err(error) => self.set_error(format!("Could not copy the code: {error}")),
+                }
+                Task::none()
+            }
+            preview_render::Message::Scrolled(_) => Task::none(),
+        }
     }
 
     /// Whether the active document is large enough to pause live preview.
@@ -957,6 +1419,133 @@ impl App {
         Task::none()
     }
 
+    /// Builds an export snapshot from the current document.
+    ///
+    /// The preview is refreshed first so exports always reflect the live
+    /// editor buffer, including when live preview is paused for a large file.
+    fn build_export_request(&mut self, format: ExportFormat) -> Option<ExportRequest> {
+        if let Some(document) = self.workspace.active_document_mut()
+            && (document.preview.is_none() || document.preview_stale)
+        {
+            document.refresh_preview();
+        }
+
+        let document = self.workspace.active_document()?;
+        let preview = document.preview.clone()?;
+        let typography = self.settings.preview_typography.clone();
+        let pdf = PdfOptions {
+            page_size: PageSize::parse(&self.settings.page_size),
+            margin: self.settings.page_margin,
+            font_family: typography.font_family.clone(),
+            font_size: typography.font_size,
+        };
+
+        Some(ExportRequest {
+            format,
+            source: document.text.clone(),
+            preview,
+            base_dir: document.path.parent().map(Path::to_path_buf),
+            title: document.display_title().to_string(),
+            theme: self.tokens.clone(),
+            typography,
+            pdf,
+        })
+    }
+
+    fn begin_export(&mut self, format: ExportFormat) -> Task<Message> {
+        let Some(request) = self.build_export_request(format) else {
+            self.set_error("Open a document before exporting.");
+            return Task::none();
+        };
+
+        Task::perform(run_export_dialog(request), Message::ExportFinished)
+    }
+
+    fn finish_export(
+        &mut self,
+        result: Result<Option<ExportOutcome>, ExportFailure>,
+    ) -> Task<Message> {
+        match result {
+            Ok(Some(outcome)) => {
+                self.set_status(format!(
+                    "Exported {} to {}",
+                    outcome.format.label(),
+                    outcome.path.display()
+                ));
+            }
+            Ok(None) => self.set_status("Export cancelled."),
+            Err(failure) => {
+                self.set_error(format!("Export failed: {}", failure.message));
+                self.notify_error(format!("Export failed: {}", failure.message));
+                self.dialog = Some(Dialog::Confirm {
+                    action: ConfirmAction::RetryExport {
+                        format: failure.format,
+                    },
+                    confirm: dialogs::Confirm {
+                        title: String::from("Export failed"),
+                        message: format!(
+                            "{}\n\nChoose another location and try again?",
+                            failure.message
+                        ),
+                        confirm_label: String::from("Choose another location"),
+                    },
+                });
+            }
+        }
+
+        Task::none()
+    }
+
+    fn copy_as_html(&mut self) -> Task<Message> {
+        let Some(request) = self.build_export_request(ExportFormat::Html) else {
+            self.set_error("Open a document before copying.");
+            return Task::none();
+        };
+        let options = request.html_options();
+
+        match export::clipboard::copy_document(&request.preview, &options) {
+            Ok(()) => self.set_status("Copied the document as HTML."),
+            Err(error) => self.set_error(format!("Could not copy the document: {error}")),
+        }
+
+        Task::none()
+    }
+
+    fn copy_as_text(&mut self) -> Task<Message> {
+        let Some(request) = self.build_export_request(ExportFormat::Html) else {
+            self.set_error("Open a document before copying.");
+            return Task::none();
+        };
+        let text = request.preview.plain_text();
+
+        match export::clipboard::copy_text(&text) {
+            Ok(()) => self.set_status("Copied the document as plain text."),
+            Err(error) => self.set_error(format!("Could not copy the document: {error}")),
+        }
+
+        Task::none()
+    }
+
+    fn print_active(&mut self) -> Task<Message> {
+        let Some(request) = self.build_export_request(ExportFormat::Pdf) else {
+            self.set_error("Open a document before printing.");
+            return Task::none();
+        };
+
+        match export::print::print_document(
+            &request.preview,
+            &request.pdf,
+            &request.theme,
+            &request.typography,
+            request.base_dir.as_deref(),
+        ) {
+            Ok(path) => self.set_status(format!("Opened the print view for {}", path.display())),
+            Err(error) => self.set_error(format!("Could not print the document: {error}")),
+        }
+
+        Task::none()
+    }
+
     fn open_folder(&mut self, root: PathBuf) -> Task<Message> {
         let failures: Vec<_> = self
             .workspace
@@ -1179,6 +1768,11 @@ impl App {
                     self.close_tab(id);
                     Task::none()
                 }
+                ConfirmAction::RetryExport { format } => self.begin_export(format),
+                ConfirmAction::ResetSettings => {
+                    self.reset_settings();
+                    Task::none()
+                }
             },
         }
     }
@@ -1278,6 +1872,7 @@ impl App {
     fn tick(&mut self) -> Task<Message> {
         let now = Instant::now();
         let mut tasks = Vec::new();
+        self.notifications.expire(Duration::from_secs(6));
 
         for outcome in self
             .workspace
@@ -1385,6 +1980,22 @@ fn persisted_settings(settings: &Settings, paths: &AppPaths) {
     }
 }
 
+/// Asks for a destination and writes the export.
+///
+/// Cancelling the dialog returns `Ok(None)`; a failed write returns an
+/// [`ExportFailure`] so the UI can offer another location.
+async fn run_export_dialog(request: ExportRequest) -> Result<Option<ExportOutcome>, ExportFailure> {
+    let path = rfd::AsyncFileDialog::new()
+        .set_title(format!("Export {}", request.format.label()))
+        .set_file_name(request.suggested_name())
+        .add_filter(request.format.filter_name(), &[request.format.extension()])
+        .save_file()
+        .await
+        .map(|handle| handle.path().to_path_buf());
+
+    export::export_to_choice(&request, path)
+}
+
 /// Returns the URL to open when a preview link points outside the document.
 fn external_url(url: &str) -> Option<&str> {
     let url = url.trim();
@@ -1414,6 +2025,29 @@ fn shortcut_message(event: iced::keyboard::Event) -> Option<Message> {
     };
 
     shortcut_for(&key, modifiers, repeat)
+}
+
+/// Arrow and Enter handling while the quick-open palette is visible.
+fn quick_open_key_message(event: iced::keyboard::Event) -> Option<Message> {
+    let iced::keyboard::Event::KeyPressed { key, .. } = event else {
+        return None;
+    };
+
+    match key {
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
+            Some(Message::QuickOpen(palette::Message::Move(1)))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
+            Some(Message::QuickOpen(palette::Message::Move(-1)))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+            Some(Message::QuickOpen(palette::Message::Accept))
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+            Some(Message::QuickOpen(palette::Message::Close))
+        }
+        _ => None,
+    }
 }
 
 fn shortcut_for(
@@ -1449,6 +2083,9 @@ fn shortcut_for(
 
     Some(match (character.as_str(), shift) {
         ("s", false) => Message::Save,
+        ("p", false) => Message::OpenQuickOpen,
+        (",", false) => Message::ToggleSettings,
+        ("/", false) => Message::OpenCheatSheet,
         ("f", false) => Message::OpenFind,
         ("h", false) => Message::OpenReplace,
         ("b", false) => Message::Format(FormatAction::Bold),
@@ -1494,6 +2131,23 @@ pub enum Message {
     DialogCancel,
     Save,
     SaveAll,
+    Export(ExportFormat),
+    ExportFinished(Result<Option<ExportOutcome>, ExportFailure>),
+    CopyAsHtml,
+    CopyAsText,
+    Print,
+    ToggleSettings,
+    Settings(settings_ui::Message),
+    SystemThemeChanged(bool),
+    UpdateCheckFinished(Result<Option<UpdateInfo>, String>),
+    UpdateInstallFinished(Result<String, String>),
+    DismissNotification(u64),
+    OpenQuickOpen,
+    QuickOpen(palette::Message),
+    OpenWelcome,
+    OpenCheatSheet,
+    CloseInfoOverlay,
+    InfoPreview(preview_render::Message),
     Sidebar(sidebar::Message),
     Editor(EditorMessage),
     Preview(preview_render::Message),
@@ -1643,6 +2297,39 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             let _ = app.workspace.save_session();
             Task::none()
         }
+        Message::Export(format) => app.begin_export(format),
+        Message::ExportFinished(result) => app.finish_export(result),
+        Message::CopyAsHtml => app.copy_as_html(),
+        Message::CopyAsText => app.copy_as_text(),
+        Message::Print => app.print_active(),
+        Message::ToggleSettings => {
+            if app.settings_open {
+                app.close_settings();
+            } else {
+                app.open_settings();
+            }
+            Task::none()
+        }
+        Message::Settings(message) => app.handle_settings(message),
+        Message::SystemThemeChanged(dark) => {
+            app.system_theme_changed(dark);
+            Task::none()
+        }
+        Message::UpdateCheckFinished(result) => app.update_check_finished(result),
+        Message::UpdateInstallFinished(result) => app.update_install_finished(result),
+        Message::DismissNotification(id) => {
+            app.notifications.dismiss(id);
+            Task::none()
+        }
+        Message::OpenQuickOpen => app.open_quick_open(),
+        Message::QuickOpen(message) => app.handle_quick_open(message),
+        Message::OpenWelcome => app.open_info(InfoOverlay::Welcome),
+        Message::OpenCheatSheet => app.open_info(InfoOverlay::CheatSheet),
+        Message::CloseInfoOverlay => {
+            app.close_info();
+            Task::none()
+        }
+        Message::InfoPreview(message) => app.handle_info_preview(message),
         Message::Sidebar(message) => match message {
             sidebar::Message::OpenFile(path) => app.open_file(path),
             sidebar::Message::ToggleFolder(path) => {
@@ -1832,12 +2519,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Escape => {
-            if app.search.visible {
+            if app.quick_open.is_some() {
+                app.quick_open = None;
+            } else if app.search.visible {
                 app.close_search();
             } else if app.dialog.is_some() {
                 app.dialog = None;
             } else if app.compare.is_some() {
                 app.compare = None;
+            } else if app.settings_open {
+                app.close_settings();
+            } else if app.info_overlay.is_some() {
+                app.close_info();
             }
             Task::none()
         }
@@ -1852,21 +2545,136 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let tokens = &app.tokens;
-    let base = base_view(app, tokens);
+    let mut layers = iced::widget::Stack::new();
+    layers = layers.push(base_view(app, tokens));
+
+    if let Some(kind) = app.info_overlay
+        && let Some(preview) = &app.info_preview
+    {
+        layers = layers.push(info_overlay_view(app, kind, preview, tokens));
+    }
+
+    if app.settings_open {
+        layers = layers.push(
+            settings_ui::view(
+                &app.settings,
+                tokens,
+                app.system_dark,
+                app.preview_theme.as_deref(),
+                &app.update_state,
+            )
+            .map(Message::Settings),
+        );
+    }
+
+    if let Some(quick) = &app.quick_open {
+        layers = layers.push(palette::view(quick, tokens).map(Message::QuickOpen));
+    }
 
     if !app.recovery.is_empty() {
-        return stack![base, recovery_overlay(app, tokens)].into();
+        layers = layers.push(recovery_overlay(app, tokens));
+    } else if let Some(dialog) = &app.dialog {
+        layers = layers.push(dialog_view(dialog, tokens));
+    } else if let Some(compare) = &app.compare {
+        layers = layers.push(compare_view(compare, tokens));
     }
 
-    if let Some(dialog) = &app.dialog {
-        return stack![base, dialog_view(dialog, tokens)].into();
+    if !app.notifications.is_empty() {
+        layers = layers.push(notifications_layer(app, tokens));
     }
 
-    if let Some(compare) = &app.compare {
-        return stack![base, compare_view(compare, tokens)].into();
-    }
+    layers.into()
+}
 
-    base
+fn notifications_layer<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message> {
+    let stack = container(notifications::view(
+        &app.notifications,
+        tokens,
+        Message::DismissNotification,
+    ))
+    .width(Length::Fixed(380.0));
+
+    container(stack)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .align_y(iced::Alignment::Start)
+        .padding(12)
+        .into()
+}
+
+fn info_overlay_view<'a>(
+    app: &'a App,
+    kind: InfoOverlay,
+    preview: &'a PreviewDocument,
+    tokens: &'a ThemeTokens,
+) -> Element<'a, Message> {
+    let styles = preview_render::PreviewStyles {
+        tokens,
+        typography: &app.settings.preview_typography,
+        base_dir: None,
+    };
+    let viewport = preview_render::PreviewViewport {
+        offset_y: 0.0,
+        height: 520.0,
+    };
+    let preview: Element<'a, preview_render::Message> = preview_render::view(
+        preview,
+        styles,
+        &app.preview_caches,
+        &app.info_scroll_id,
+        viewport,
+    );
+
+    let card = container(
+        column![
+            row![
+                text(kind.title()).size(18).color(tokens.heading),
+                Space::new().width(Length::Fill),
+                button(text("Close").size(12)).on_press(Message::CloseInfoOverlay),
+            ]
+            .align_y(iced::Alignment::Center),
+            container(preview.map(Message::InfoPreview))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(tokens.background.into()),
+                    border: iced::border::Border {
+                        color: tokens.border,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(10)
+        .padding(16)
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .max_width(860.0)
+    .height(Length::Fill)
+    .max_height(680.0)
+    .style(move |_| container::Style {
+        background: Some(tokens.surface_raised.into()),
+        border: iced::border::Border {
+            color: tokens.border,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: iced::Vector::new(0.0, 6.0),
+            blur_radius: 24.0,
+        },
+        ..container::Style::default()
+    });
+
+    container(card)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .padding(18)
+        .into()
 }
 
 fn base_view<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message> {
@@ -1894,9 +2702,18 @@ fn welcome_view<'a>(tokens: &'a ThemeTokens) -> Element<'a, Message> {
             text("A fast, native, offline Markdown workbench.")
                 .size(14)
                 .color(tokens.muted),
-            button(text("Open a folder").size(14))
-                .padding([8, 16])
-                .on_press(Message::OpenFolder),
+            row![
+                button(text("Open a folder").size(14))
+                    .padding([8, 16])
+                    .on_press(Message::OpenFolder),
+                button(text("Read the welcome guide").size(14))
+                    .padding([8, 16])
+                    .on_press(Message::OpenWelcome),
+                button(text("Cheat sheet").size(14))
+                    .padding([8, 16])
+                    .on_press(Message::OpenCheatSheet),
+            ]
+            .spacing(8),
             text("Your files stay on this computer.")
                 .size(12)
                 .color(tokens.muted),
@@ -2054,11 +2871,20 @@ fn toolbar<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message> {
         button(text("Delete").size(12)).on_press(Message::Delete),
         button(text("Find").size(12)).on_press(Message::OpenFind),
         button(text("Replace").size(12)).on_press(Message::OpenReplace),
-        Space::new().width(Length::Fill),
-        text(title).size(12).color(tokens.muted),
+        button(text("Quick open").size(12)).on_press(Message::OpenQuickOpen),
+        button(text("Settings").size(12)).on_press(Message::ToggleSettings),
+        button(text("Cheat sheet").size(12)).on_press(Message::OpenCheatSheet),
     ]
     .spacing(4)
     .align_y(iced::Alignment::Center);
+
+    for format in ExportFormat::ALL {
+        controls = controls
+            .push(button(text(format.action_label()).size(12)).on_press(Message::Export(format)));
+    }
+    controls = controls.push(button(text("Copy HTML").size(12)).on_press(Message::CopyAsHtml));
+    controls = controls.push(button(text("Copy text").size(12)).on_press(Message::CopyAsText));
+    controls = controls.push(button(text("Print").size(12)).on_press(Message::Print));
 
     for mode in LayoutMode::ALL {
         let active = app.layout == mode;
@@ -2080,7 +2906,18 @@ fn toolbar<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message> {
     controls = controls.push(button(text("Outline").size(12)).on_press(Message::ToggleOutline));
     controls = controls.push(button(text("Focus").size(12)).on_press(Message::ToggleFocusMode));
 
-    container(controls)
+    let bar = row![
+        container(
+            scrollable(controls).direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+        )
+        .width(Length::Fill),
+        container(text(title).size(12).color(tokens.muted)).padding([0, 8]),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    container(bar)
         .padding([6, 8])
         .width(Length::Fill)
         .style(move |_| container::Style {
@@ -2635,7 +3472,12 @@ fn compare_view<'a>(compare: &'a Compare, tokens: &'a ThemeTokens) -> Element<'a
 
 /// Runs the native application.
 pub fn run() -> iced::Result {
-    iced::application(App::boot, update, view)
+    run_with_paths(Vec::new())
+}
+
+/// Runs the native application with documents or a folder from the OS.
+pub fn run_with_paths(initial: Vec<PathBuf>) -> iced::Result {
+    iced::application(move || App::boot_with_paths(initial.clone()), update, view)
         .title(App::title)
         .theme(App::iced_theme)
         .subscription(App::subscription)
@@ -2656,6 +3498,299 @@ mod tests {
 
     fn character(value: &str) -> Key {
         Key::Character(value.into())
+    }
+
+    fn fixture_app() -> (tempfile::TempDir, App) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("notes");
+        std::fs::create_dir_all(&root).expect("notes");
+        std::fs::write(root.join("alpha.md"), "# Alpha\n\nOne.\n").expect("alpha");
+        std::fs::write(root.join("beta.md"), "# Beta\n\nTwo.\n").expect("beta");
+
+        let paths = AppPaths::with_base(tmp.path().join("app"));
+        paths.ensure().expect("paths");
+        let mut workspace = WorkspaceState::new(paths.session_file(), paths.recovery_dir());
+        workspace.open_folder(&root).expect("open folder");
+        workspace
+            .open_document(root.join("alpha.md"))
+            .expect("open document");
+
+        let mut app = App {
+            workspace,
+            settings: Settings::default(),
+            paths,
+            status: String::from("Ready"),
+            status_is_error: false,
+            tokens: ThemeTokens::light(),
+            system_dark: false,
+            layout: LayoutMode::SideBySide,
+            sidebar_visible: true,
+            outline_visible: true,
+            focus_mode: false,
+            search: search_ui::SearchPanel::default(),
+            selected: Some(root.join("alpha.md")),
+            expanded: HashSet::new(),
+            dialog: None,
+            compare: None,
+            recovery: Vec::new(),
+            settings_open: false,
+            preview_theme: None,
+            preview_theme_backup: None,
+            update_state: settings_ui::UpdateState::Idle,
+            quick_open: None,
+            notifications: notifications::NotificationCenter::default(),
+            info_overlay: None,
+            info_preview: None,
+            info_scroll_id: iced::widget::Id::new("markmydown-info"),
+            editor: None,
+            editor_doc: None,
+            editor_needs_position: true,
+            panes: new_pane_state(0.5),
+            preview_caches: RefCell::new(preview_render::RenderCaches::default()),
+            preview_scroll_id: iced::widget::Id::new("markmydown-preview"),
+            preview_offset: 0.0,
+            preview_progress: 0.0,
+            preview_viewport_height: 800.0,
+            preview_last_edit: Instant::now(),
+            preview_needs_reset: true,
+            ignore_preview_scrolls_until: None,
+            ignore_editor_scrolls_until: None,
+            last_recovery: Instant::now(),
+            last_session: Instant::now(),
+        };
+        app.install_editor();
+        (tmp, app)
+    }
+
+    #[test]
+    fn themes_can_be_previewed_applied_and_persisted() {
+        let (_tmp, mut app) = fixture_app();
+        app.select_theme(String::from("light"));
+        let original = app.tokens.clone();
+
+        app.preview_theme(Some(String::from("nord")));
+        assert_ne!(app.tokens, original);
+        assert_eq!(app.settings.theme, "light", "previewing does not persist");
+        assert!(app.tokens.is_dark);
+
+        app.cancel_theme_preview();
+        assert_eq!(app.tokens, original);
+        assert!(app.preview_theme.is_none());
+
+        app.preview_theme(Some(String::from("nord")));
+        app.select_theme(String::from("nord"));
+        assert_eq!(app.settings.theme, "nord");
+        assert!(app.tokens.is_dark);
+        let loaded = Settings::load(&app.paths.settings_file());
+        assert_eq!(loaded.settings.theme, "nord");
+    }
+
+    #[test]
+    fn system_theme_changes_follow_the_os_only_when_selected() {
+        let (_tmp, mut app) = fixture_app();
+        app.select_theme(String::from("system"));
+        app.system_theme_changed(true);
+        assert!(app.tokens.is_dark);
+
+        app.select_theme(String::from("light"));
+        app.system_theme_changed(true);
+        assert!(!app.tokens.is_dark);
+    }
+
+    #[test]
+    fn editor_and_preview_typography_are_independent() {
+        let (_tmp, mut app) = fixture_app();
+        let editor_default = app.settings.editor_typography.clone();
+        let preview_default = app.settings.preview_typography.clone();
+
+        let _ = app.handle_settings(settings_ui::Message::EditorFontSize(20.0));
+        assert_eq!(app.settings.editor_typography.font_size, 20.0);
+        assert_eq!(app.settings.preview_typography, preview_default);
+
+        let _ = app.handle_settings(settings_ui::Message::PreviewFontSize(23.0));
+        assert_eq!(app.settings.preview_typography.font_size, 23.0);
+        assert_eq!(
+            app.settings.editor_typography.font_size, 20.0,
+            "the editor font did not change with the preview"
+        );
+
+        let _ = app.handle_settings(settings_ui::Message::ResetEditorTypography);
+        assert_eq!(app.settings.editor_typography, editor_default);
+        let _ = app.handle_settings(settings_ui::Message::ResetPreviewTypography);
+        assert_eq!(app.settings.preview_typography, preview_default);
+    }
+
+    #[test]
+    fn resetting_settings_restores_and_persists_defaults() {
+        let (_tmp, mut app) = fixture_app();
+        app.select_theme(String::from("nord"));
+        app.settings.editor_typography.font_size = 30.0;
+        app.settings.layout = String::from("read");
+        app.settings.sidebar_visible = false;
+
+        app.reset_settings();
+
+        assert_eq!(app.settings, Settings::default());
+        assert!(app.layout == LayoutMode::SideBySide);
+        assert!(app.sidebar_visible);
+        let loaded = Settings::load(&app.paths.settings_file());
+        assert_eq!(loaded.settings, Settings::default());
+    }
+
+    #[test]
+    fn welcome_and_cheat_sheet_open_and_close() {
+        let (_tmp, mut app) = fixture_app();
+
+        let _ = app.open_info(InfoOverlay::Welcome);
+        assert_eq!(app.info_overlay, Some(InfoOverlay::Welcome));
+        let welcome = app.info_preview.as_ref().expect("welcome preview");
+        assert!(!welcome.blocks.is_empty());
+        assert!(welcome::WELCOME.contains("E = mc^2"));
+        assert!(welcome::WELCOME.contains("```mermaid"));
+        assert!(welcome::WELCOME.contains("println!"));
+        assert!(welcome::WELCOME.contains("https://commonmark.org"));
+
+        let _ = view(&app);
+        app.close_info();
+        assert!(app.info_overlay.is_none());
+        assert!(app.info_preview.is_none());
+
+        let _ = app.open_info(InfoOverlay::CheatSheet);
+        assert_eq!(app.info_overlay, Some(InfoOverlay::CheatSheet));
+        assert!(welcome::CHEAT_SHEET.contains("Quick open"));
+        assert!(welcome::CHEAT_SHEET.contains("Cmd/Ctrl+B"));
+        let _ = view(&app);
+        app.close_info();
+        assert!(app.info_overlay.is_none());
+    }
+
+    #[test]
+    fn quick_open_filters_and_opens_documents() {
+        let (_tmp, mut app) = fixture_app();
+        let _ = app.open_quick_open();
+        assert!(app.quick_open.is_some());
+        let _ = view(&app);
+
+        let quick = app.quick_open.as_mut().expect("quick open");
+        quick.set_query("beta");
+        assert_eq!(quick.filtered().count(), 1);
+        let path = quick.selected_entry().expect("selected").path.clone();
+        let _ = app.handle_quick_open(palette::Message::Open(path.clone()));
+
+        assert!(app.quick_open.is_none());
+        assert_eq!(
+            app.workspace
+                .active_document()
+                .expect("active document")
+                .path,
+            path
+        );
+    }
+
+    #[test]
+    fn notifications_support_success_and_failure_states() {
+        let (_tmp, mut app) = fixture_app();
+        app.notify_success("saved");
+        app.notify_error("failed");
+
+        assert_eq!(app.notifications.len(), 2);
+        let id = app.notifications.latest().expect("latest").id;
+        app.notifications.dismiss(id);
+        assert_eq!(app.notifications.len(), 1);
+        let _ = view(&app);
+    }
+
+    #[test]
+    fn update_state_handles_available_up_to_date_and_offline() {
+        let (_tmp, mut app) = fixture_app();
+
+        let _ = app.update_check_finished(Ok(Some(UpdateInfo {
+            version: String::from("2.0.0"),
+            name: String::from("v2.0.0"),
+            notes: None,
+        })));
+        assert!(matches!(
+            app.update_state,
+            settings_ui::UpdateState::Available(_)
+        ));
+
+        let _ = app.update_check_finished(Ok(None));
+        assert_eq!(app.update_state, settings_ui::UpdateState::UpToDate);
+
+        app.update_state = settings_ui::UpdateState::Checking;
+        let _ = app.update_check_finished(Err(String::from("network unavailable")));
+        assert!(matches!(
+            app.update_state,
+            settings_ui::UpdateState::Error(_)
+        ));
+        assert!(
+            app.workspace.active_document().is_some(),
+            "an offline check does not block the app"
+        );
+    }
+
+    #[test]
+    fn launch_paths_open_multiple_documents_as_tabs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("notes");
+        std::fs::create_dir_all(&root).expect("notes");
+        let one = root.join("one.md");
+        let two = root.join("two.markdown");
+        std::fs::write(&one, "# One\n").expect("one");
+        std::fs::write(&two, "# Two\n").expect("two");
+        let args: Vec<std::ffi::OsString> = vec![
+            std::ffi::OsString::from("markmydown"),
+            one.clone().into_os_string(),
+            two.clone().into_os_string(),
+        ];
+
+        let paths = crate::config::launch::document_paths(args);
+        let root = crate::config::launch::launch_root(&paths).expect("root");
+        let mut workspace =
+            WorkspaceState::new(tmp.path().join("session.json"), tmp.path().join("recovery"));
+        workspace.open_folder(root).expect("open folder");
+        for path in &paths {
+            workspace.open_document(path).expect("open document");
+        }
+
+        assert_eq!(workspace.tabs().len(), 2);
+    }
+
+    #[test]
+    fn boot_with_launch_paths_opens_the_workspace_and_tabs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("notes");
+        std::fs::create_dir_all(&root).expect("notes");
+        let one = root.join("one.md");
+        let two = root.join("two.markdown");
+        std::fs::write(&one, "# One\n").expect("one");
+        std::fs::write(&two, "# Two\n").expect("two");
+
+        let paths = AppPaths::with_base(tmp.path().join("app"));
+        let app = App::boot_at_paths(paths, vec![one.clone(), two.clone()]);
+
+        assert!(app.workspace.is_open());
+        assert_eq!(app.workspace.tabs().len(), 2);
+        assert_eq!(
+            app.workspace
+                .active_document()
+                .expect("active document")
+                .path,
+            one.canonicalize().expect("canonical")
+        );
+    }
+
+    #[test]
+    fn settings_and_welcome_layers_build_a_view() {
+        let (_tmp, mut app) = fixture_app();
+        app.settings_open = true;
+        app.preview_theme = Some(String::from("sepia"));
+        let _ = view(&app);
+
+        app.settings_open = false;
+        app.preview_theme = None;
+        let _ = app.open_info(InfoOverlay::Welcome);
+        let _ = view(&app);
     }
 
     #[test]
@@ -2734,8 +3869,53 @@ mod tests {
             Some(Message::OpenReplace)
         ));
         assert!(matches!(
+            shortcut_for(&character("p"), Modifiers::COMMAND, false),
+            Some(Message::OpenQuickOpen)
+        ));
+        assert!(matches!(
+            shortcut_for(&character(","), Modifiers::COMMAND, false),
+            Some(Message::ToggleSettings)
+        ));
+        assert!(matches!(
+            shortcut_for(&character("/"), Modifiers::COMMAND, false),
+            Some(Message::OpenCheatSheet)
+        ));
+        assert!(matches!(
             shortcut_for(&Key::Named(key::Named::Escape), Modifiers::NONE, false),
             Some(Message::Escape)
+        ));
+    }
+
+    #[test]
+    fn quick_open_arrow_keys_move_and_enter_accepts() {
+        let down = quick_open_key_message(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(key::Named::ArrowDown),
+            modified_key: Key::Named(key::Named::ArrowDown),
+            physical_key: key::Physical::Code(key::Code::ArrowDown),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        })
+        .expect("down");
+        assert!(matches!(
+            down,
+            Message::QuickOpen(palette::Message::Move(1))
+        ));
+
+        let enter = quick_open_key_message(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(key::Named::Enter),
+            modified_key: Key::Named(key::Named::Enter),
+            physical_key: key::Physical::Code(key::Code::Enter),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        })
+        .expect("enter");
+        assert!(matches!(
+            enter,
+            Message::QuickOpen(palette::Message::Accept)
         ));
     }
 
@@ -2783,6 +3963,7 @@ mod tests {
             status: String::from("Ready"),
             status_is_error: false,
             tokens: ThemeTokens::light(),
+            system_dark: false,
             layout: LayoutMode::SideBySide,
             sidebar_visible: true,
             outline_visible: true,
@@ -2793,6 +3974,15 @@ mod tests {
             dialog: None,
             compare: None,
             recovery: Vec::new(),
+            settings_open: false,
+            preview_theme: None,
+            preview_theme_backup: None,
+            update_state: settings_ui::UpdateState::Idle,
+            quick_open: None,
+            notifications: notifications::NotificationCenter::default(),
+            info_overlay: None,
+            info_preview: None,
+            info_scroll_id: iced::widget::Id::new("markmydown-info"),
             editor: None,
             editor_doc: None,
             editor_needs_position: true,
@@ -2841,6 +4031,38 @@ mod tests {
             "https://example.com",
         ));
         let _ = view(&app);
+
+        app.dialog = None;
+        let request = app
+            .build_export_request(ExportFormat::Markdown)
+            .expect("export request");
+        assert_eq!(request.source, "# Title\n\n## Section\n\nBody\n");
+        assert_eq!(request.title, "note");
+        assert_eq!(request.suggested_name(), "note.md");
+        assert_eq!(request.preview.blocks.len(), 3);
+
+        let _ = app.finish_export(Err(ExportFailure {
+            format: ExportFormat::Html,
+            message: String::from("disk is full"),
+        }));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Confirm {
+                action: ConfirmAction::RetryExport {
+                    format: ExportFormat::Html
+                },
+                ..
+            })
+        ));
+        assert!(
+            app.workspace.active_document().is_some(),
+            "a failed export keeps the document open"
+        );
+
+        app.dialog = None;
+        let _ = app.finish_export(Ok(None));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.status, "Export cancelled.");
     }
 
     #[test]
@@ -2868,6 +4090,7 @@ mod tests {
             status: String::from("Ready"),
             status_is_error: false,
             tokens: ThemeTokens::light(),
+            system_dark: false,
             layout: LayoutMode::SideBySide,
             sidebar_visible: true,
             outline_visible: true,
@@ -2878,6 +4101,15 @@ mod tests {
             dialog: None,
             compare: None,
             recovery: Vec::new(),
+            settings_open: false,
+            preview_theme: None,
+            preview_theme_backup: None,
+            update_state: settings_ui::UpdateState::Idle,
+            quick_open: None,
+            notifications: notifications::NotificationCenter::default(),
+            info_overlay: None,
+            info_preview: None,
+            info_scroll_id: iced::widget::Id::new("markmydown-info"),
             editor: None,
             editor_doc: None,
             editor_needs_position: true,

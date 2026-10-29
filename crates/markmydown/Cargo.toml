@@ -43,7 +43,35 @@ arboard.workspace = true
 thiserror.workspace = true
 resvg.workspace = true
 tiny-skia.workspace = true
+png.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+iced-code-editor = { workspace = true, features = ["bench"] }
+
+[package.metadata.packager]
+product-name = "markmydown"
+identifier = "dev.markmydown.markmydown"
+description = "A fast, native, offline-first Markdown workbench"
+long-description = "A pure-Rust Markdown workbench with a local-folder workspace, native preview, and Markdown, HTML, and PDF export."
+homepage = "https://github.com/markmydown/markmydown"
+authors = ["markmydown contributors"]
+category = "Productivity"
+before-packaging-command = "cargo build -p markmydown --release"
+out-dir = "../../target/packager"
+icons = [
+  "../../assets/icons/icon-16.png",
+  "../../assets/icons/icon-32.png",
+  "../../assets/icons/icon-128.png",
+  "../../assets/icons/icon-256.png",
+  "../../assets/icons/icon-512.png",
+  "../../assets/icons/icon-512@2x.png",
+]
+
+[[package.metadata.packager.file-associations]]
+extensions = ["md", "markdown", "mdown"]
+name = "Markdown Document"
+description = "Markdown document"
+mime-type = "text/markdown"
+role = "editor"
