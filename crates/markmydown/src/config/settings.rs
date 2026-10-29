@@ -25,6 +25,9 @@ pub struct Settings {
     /// `editor-only`, `side-by-side`, `preview-only`, or `read`.
     pub layout: String,
     pub sidebar_visible: bool,
+    pub outline_visible: bool,
+    /// Fraction of the content width used by the editor in side-by-side mode.
+    pub split_ratio: f32,
     pub focus_mode: bool,
     pub editor_typography: Typography,
     pub preview_typography: Typography,
@@ -45,6 +48,8 @@ impl Default for Settings {
             theme: String::from("system"),
             layout: String::from("side-by-side"),
             sidebar_visible: true,
+            outline_visible: true,
+            split_ratio: 0.5,
             focus_mode: false,
             editor_typography: Typography::editor_default(),
             preview_typography: Typography::preview_default(),
@@ -155,6 +160,10 @@ impl Settings {
         self.autosave_ms = self.autosave_ms.clamp(250, 30_000);
         self.preview_debounce_ms = self.preview_debounce_ms.clamp(30, 2_000);
         self.page_margin = self.page_margin.clamp(18.0, 144.0);
+        if !self.split_ratio.is_finite() {
+            self.split_ratio = 0.5;
+        }
+        self.split_ratio = self.split_ratio.clamp(0.2, 0.8);
     }
 }
 
@@ -248,6 +257,7 @@ mod tests {
             layout: String::from("diagonal"),
             autosave_ms: 10,
             page_margin: 999.0,
+            split_ratio: 9.0,
             ..Settings::default()
         };
 
@@ -257,6 +267,7 @@ mod tests {
         assert_eq!(settings.layout, "side-by-side");
         assert_eq!(settings.autosave_ms, 250);
         assert_eq!(settings.page_margin, 144.0);
+        assert!((settings.split_ratio - 0.8).abs() < f32::EPSILON);
     }
 
     #[test]

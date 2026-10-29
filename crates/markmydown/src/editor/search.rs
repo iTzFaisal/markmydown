@@ -83,6 +83,33 @@ pub fn find_previous(
         .or(last))
 }
 
+/// Replaces the currently selected match. Capture-group references such as
+/// `$1` work when regex search is enabled.
+pub fn replace_match(
+    text: &str,
+    query: &str,
+    matched: &SearchMatch,
+    replacement: &str,
+    options: SearchOptions,
+) -> Result<TextEdit, SearchError> {
+    let regex = build_regex(query, options)?;
+    let replaced = regex.replace(&matched.text, replacement).into_owned();
+    let chars: Vec<char> = text.chars().collect();
+
+    let mut new_text = String::with_capacity(text.len() + replaced.len());
+    let start = position_to_char(&chars, matched.start);
+    let end = position_to_char(&chars, matched.end);
+    new_text.extend(chars[..start].iter());
+    new_text.push_str(&replaced);
+    new_text.extend(chars[end..].iter());
+
+    Ok(TextEdit {
+        text: new_text,
+        selection: None,
+        cursor: matched.start,
+    })
+}
+
 /// Replaces every match. Capture-group references such as `$1` work when
 /// regex search is enabled.
 pub fn replace_all(
@@ -125,6 +152,25 @@ fn build_regex(query: &str, options: SearchOptions) -> Result<Regex, SearchError
         .dot_matches_new_line(true)
         .build()
         .map_err(|error| SearchError::InvalidPattern(error.to_string()))
+}
+
+fn position_to_char(chars: &[char], position: Position) -> usize {
+    let mut line = 0;
+    let mut column = 0;
+
+    for (index, ch) in chars.iter().enumerate() {
+        if (line, column) >= position {
+            return index;
+        }
+        if *ch == '\n' {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+
+    chars.len()
 }
 
 fn char_to_position(text: &str, char_index: usize) -> Position {
@@ -216,6 +262,42 @@ mod tests {
 
         assert_eq!(edit.text, "1a 2b");
         assert!(edit.selection.is_none());
+    }
+
+    #[test]
+    fn replaces_one_match_and_supports_capture_groups() {
+        let options = SearchOptions {
+            case_sensitive: true,
+            regex: true,
+        };
+        let matches = find_all("a1 b2 c3", r"([a-z])(\d)", options).expect("search");
+        let edit = replace_match("a1 b2 c3", r"([a-z])(\d)", &matches[1], "$2$1", options)
+            .expect("replace");
+
+        assert_eq!(edit.text, "a1 2b c3");
+        assert_eq!(edit.cursor, (0, 3));
+    }
+
+    #[test]
+    fn replace_match_rejects_an_invalid_expression() {
+        let matched = SearchMatch {
+            start: (0, 0),
+            end: (0, 1),
+            text: "[".into(),
+        };
+        let error = replace_match(
+            "[",
+            "[",
+            &matched,
+            "x",
+            SearchOptions {
+                case_sensitive: true,
+                regex: true,
+            },
+        )
+        .expect_err("the invalid pattern must be reported");
+
+        assert!(matches!(error, SearchError::InvalidPattern(_)));
     }
 
     #[test]

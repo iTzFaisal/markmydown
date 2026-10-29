@@ -325,6 +325,15 @@ pub struct CodeEditor {
     pub(crate) focus_mode: bool,
     /// How strongly non-current lines are dimmed in focus mode (0–1).
     pub(crate) focus_dim_strength: f32,
+    /// Host-provided search ranges, drawn as decorations over the text.
+    ///
+    /// Each entry is a half-open `(start, end)` range in logical
+    /// `(line, column)` coordinates. The host uses this for regex and
+    /// multi-file search, which the built-in search state cannot represent
+    /// because it assumes a single query length for every match.
+    pub(crate) host_highlights: Vec<((usize, usize), (usize, usize))>,
+    /// Index of the current host highlight, colored with the accent.
+    pub(crate) host_highlight_current: Option<usize>,
 }
 
 /// Messages emitted by the code editor
@@ -726,6 +735,8 @@ impl CodeEditor {
             pre_edit_last_line: 0,
             focus_mode: false,
             focus_dim_strength: 0.72,
+            host_highlights: Vec::new(),
+            host_highlight_current: None,
         };
 
         // Perform initial character dimension calculation
@@ -828,6 +839,8 @@ impl CodeEditor {
         self.viewport_scroll = 0.0;
         self.history = CommandHistory::new(100);
         self.is_grouping = false;
+        self.host_highlights.clear();
+        self.host_highlight_current = None;
         self.last_blink = Instant::now();
         self.cursor_visible = true;
         self.content_cache = canvas::Cache::default();

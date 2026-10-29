@@ -468,4 +468,13 @@ mod tests {
             "a line inside a block comment must be colored as a comment"
         );
     }
+
+    #[test]
+    fn markdown_uses_the_markdown_syntax_and_a_palette() {
+        let editor = CodeEditor::new("# Heading\n\n**bold**", "markdown");
+        let (_syntax_set, syntax, theme) = editor.resolve_syntax();
+
+        assert_eq!(syntax.map(|syntax| syntax.name.as_str()), Some("Markdown"));
+        assert!(theme.is_some(), "a highlight palette must be selected");
+    }
 }

@@ -201,7 +201,10 @@ Atomic-write, permissions, hash, and failure-injection cases are covered in
 
 - The preview pane is a placeholder until the preview milestone; the workspace
   model already exposes front matter metadata for it.
-- Full keyboard navigation and the editor command surface arrive in their
-  dedicated milestones.
+- The editor milestone adds formatting, search/replace, outline, status,
+  focus mode, and editor/preview layouts; see
+  [`docs/editor.md`](editor.md).
+- Read mode currently reuses the preview-only layout until reading typography
+  and scroll synchronization arrive with the preview milestone.
 - The watcher is best-effort. A file changed while the app is not running is
   detected when the watcher starts or when the document is next saved.

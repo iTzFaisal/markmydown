@@ -194,6 +194,7 @@ impl canvas::Program<Message> for CodeEditor {
                 }
 
                 self.draw_search_highlights(frame, &ctx, start_idx, end_idx);
+                self.draw_host_highlights(frame, &ctx, start_idx, end_idx);
                 self.draw_matching_bracket_highlight(frame, &ctx);
                 self.draw_selection_highlight(frame, &ctx);
                 self.draw_jump_link_highlight(frame, &ctx, bounds, _cursor);

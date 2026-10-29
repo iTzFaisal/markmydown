@@ -93,6 +93,47 @@ impl EditorPane {
         self.editor.set_focus_mode(enabled);
     }
 
+    pub fn focus_mode(&self) -> bool {
+        self.editor.focus_mode()
+    }
+
+    /// Gives the widget programmatic focus so keyboard input reaches it.
+    pub fn focus(&mut self) {
+        self.editor.request_focus();
+        let _ = self.editor.update(&EditorMessage::CanvasFocusGained);
+    }
+
+    /// Draws host search matches and clears them when the set is empty.
+    pub fn set_search_highlights(
+        &mut self,
+        matches: &[search::SearchMatch],
+        current: Option<usize>,
+    ) {
+        if matches.is_empty() {
+            self.editor.clear_host_highlights();
+            return;
+        }
+
+        let ranges = matches
+            .iter()
+            .map(|matched| (matched.start, matched.end))
+            .collect();
+        self.editor.set_host_highlights(ranges, current);
+    }
+
+    /// Replaces the active match as one undo step.
+    pub fn replace_match(
+        &mut self,
+        query: &str,
+        matched: &search::SearchMatch,
+        replacement: &str,
+        options: search::SearchOptions,
+    ) -> Result<Task<EditorMessage>, search::SearchError> {
+        let edit =
+            search::replace_match(&self.editor.content(), query, matched, replacement, options)?;
+        Ok(self.apply_edit(edit))
+    }
+
     /// Selects a range and scrolls it into view.
     pub fn select_range(&mut self, start: Position, end: Position) -> Task<EditorMessage> {
         self.editor.set_selection(start, end)

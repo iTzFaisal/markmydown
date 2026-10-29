@@ -157,6 +157,31 @@ impl super::CodeEditor {
         self.focus_mode
     }
 
+    /// Replaces the host-provided search decorations.
+    ///
+    /// Ranges are half-open logical `(line, column)` pairs. They are drawn
+    /// under the cursor and selection overlays, with `current` using the
+    /// accent color. Pass an empty vector to clear them.
+    pub fn set_host_highlights(
+        &mut self,
+        highlights: Vec<((usize, usize), (usize, usize))>,
+        current: Option<usize>,
+    ) {
+        self.host_highlights = highlights;
+        self.host_highlight_current = current;
+        self.overlay_cache.clear();
+    }
+
+    /// Clears host-provided search decorations.
+    pub fn clear_host_highlights(&mut self) {
+        if self.host_highlights.is_empty() && self.host_highlight_current.is_none() {
+            return;
+        }
+        self.host_highlights.clear();
+        self.host_highlight_current = None;
+        self.overlay_cache.clear();
+    }
+
     /// 0 hides non-current text, 1 disables dimming. Clamped to 0–1.
     pub fn set_focus_dim_strength(&mut self, strength: f32) {
         self.focus_dim_strength = strength.clamp(0.0, 1.0);
@@ -197,5 +222,40 @@ impl super::CodeEditor {
             4 => 1.0 - self.focus_dim_strength * 0.55,
             _ => 1.0 - self.focus_dim_strength,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::canvas_editor::CodeEditor;
+
+    #[test]
+    fn focus_mode_dims_lines_away_from_the_caret_and_restores_them() {
+        let mut editor = CodeEditor::new("one\ntwo\nthree\nfour\nfive\nsix", "txt");
+        editor.cursors.set_single((2, 0));
+
+        editor.set_focus_mode(true);
+        assert!(editor.focus_mode());
+        assert_eq!(editor.focus_opacity(2), 1.0);
+        assert_eq!(editor.focus_opacity(1), 1.0);
+        assert!(editor.focus_opacity(0) < 1.0);
+        assert!(editor.focus_opacity(5) < 1.0);
+
+        editor.set_focus_mode(false);
+        assert!(!editor.focus_mode());
+        assert_eq!(editor.focus_opacity(0), 1.0);
+    }
+
+    #[test]
+    fn host_highlights_accept_ranges_and_clear() {
+        let mut editor = CodeEditor::new("one two", "txt");
+
+        editor.set_host_highlights(vec![((0, 0), (0, 3)), ((0, 4), (0, 7))], Some(1));
+        assert_eq!(editor.host_highlights.len(), 2);
+        assert_eq!(editor.host_highlight_current, Some(1));
+
+        editor.clear_host_highlights();
+        assert!(editor.host_highlights.is_empty());
+        assert!(editor.host_highlight_current.is_none());
     }
 }

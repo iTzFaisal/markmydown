@@ -33,16 +33,16 @@
 
 ## 3. Editor
 
-- [ ] 3.1 Integrate the vendored editor with Markdown syntax highlighting; verify typing, selection, undo/redo, clipboard, and a 1 MB fixture remain responsive.
-- [ ] 3.2 Implement formatting actions for bold, italic, heading, strikethrough, lists, quote, code, table, link, and image; verify each action and shortcut against the editor spec.
-- [ ] 3.3 Implement smart list continuation, Tab/Shift+Tab indent, and paste-URL-over-selection; verify the three scenarios in the editor spec.
-- [ ] 3.4 Implement find/replace with case sensitivity, regex, and replace-all; verify navigation, one-step undo, and invalid-regex handling.
-- [ ] 3.5 Implement the outline and status bar; verify heading navigation, word/character/reading-time stats, and selection stats.
-- [ ] 3.6 Patch the editor for focus mode: dim non-current text and keep the caret centered; verify the toggle and normal-mode restoration.
-- [ ] 3.7 Implement editor-only, side-by-side, and preview-only layouts with resizable panes; verify each layout and pane persistence.
-- [ ] 3.8 Spike IME and RTL input with Arabic and CJK fixtures; verify composition is not duplicated and document any limitations.
-- [ ] 3.9 Add editor unit and UI tests; verify `cargo test` covers the scenarios in `specs/markdown-editor/spec.md`.
-- [ ] 3.10 Document the editor adapter and vendored patch surface in `docs/editor.md`; verify the document explains how to update the vendored crate.
+- [x] 3.1 Integrate the vendored editor with Markdown syntax highlighting; verify typing, selection, undo/redo, clipboard, and a 1 MB fixture remain responsive.
+- [x] 3.2 Implement formatting actions for bold, italic, heading, strikethrough, lists, quote, code, table, link, and image; verify each action and shortcut against the editor spec.
+- [x] 3.3 Implement smart list continuation, Tab/Shift+Tab indent, and paste-URL-over-selection; verify the three scenarios in the editor spec.
+- [x] 3.4 Implement find/replace with case sensitivity, regex, and replace-all; verify navigation, one-step undo, and invalid-regex handling.
+- [x] 3.5 Implement the outline and status bar; verify heading navigation, word/character/reading-time stats, and selection stats.
+- [x] 3.6 Patch the editor for focus mode: dim non-current text and keep the caret centered; verify the toggle and normal-mode restoration.
+- [x] 3.7 Implement editor-only, side-by-side, and preview-only layouts with resizable panes; verify each layout and pane persistence.
+- [x] 3.8 Spike IME and RTL input with Arabic and CJK fixtures; verify composition is not duplicated and document any limitations.
+- [x] 3.9 Add editor unit and UI tests; verify `cargo test` covers the scenarios in `specs/markdown-editor/spec.md`.
+- [x] 3.10 Document the editor adapter and vendored patch surface in `docs/editor.md`; verify the document explains how to update the vendored crate.
 
 ## 4. Preview
 

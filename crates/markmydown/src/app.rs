@@ -4,16 +4,17 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use iced::widget::{Space, button, column, container, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, pane_grid, row, scrollable, stack, text};
 use iced::{Element, Length, Subscription, Task};
 use iced_code_editor::Message as EditorMessage;
 
 use crate::config::paths::AppPaths;
 use crate::config::settings::Settings;
+use crate::editor::markdown::FormatAction;
 use crate::editor::{EditorPane, message_may_edit};
 use crate::theme::registry;
 use crate::theme::tokens::ThemeTokens;
-use crate::ui::{dialogs, sidebar, status};
+use crate::ui::{dialogs, outline, search as search_ui, sidebar, status};
 use crate::workspace::document::{Cursor, ExternalChange};
 use crate::workspace::recovery::RecoveryRecord;
 use crate::workspace::session::Session;
@@ -57,6 +58,33 @@ impl LayoutMode {
     pub fn shows_preview(self) -> bool {
         matches!(self, Self::SideBySide | Self::PreviewOnly | Self::Read)
     }
+
+    /// Parses the value stored in settings.
+    pub fn from_settings(value: &str) -> Self {
+        match value {
+            "editor-only" => Self::EditorOnly,
+            "preview-only" => Self::PreviewOnly,
+            "read" => Self::Read,
+            _ => Self::SideBySide,
+        }
+    }
+
+    /// Serializes the value for settings.
+    pub fn as_settings(self) -> &'static str {
+        match self {
+            Self::EditorOnly => "editor-only",
+            Self::SideBySide => "side-by-side",
+            Self::PreviewOnly => "preview-only",
+            Self::Read => "read",
+        }
+    }
+}
+
+/// Which view a resizable pane contains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneKind {
+    Editor,
+    Preview,
 }
 
 /// The operation an input dialog will perform when submitted.
@@ -66,6 +94,7 @@ pub enum InputAction {
     NewFolder { parent: PathBuf },
     Rename { path: PathBuf },
     Move { path: PathBuf },
+    InsertLink { image: bool },
 }
 
 /// The operation a confirmation dialog will perform when confirmed.
@@ -106,7 +135,9 @@ pub struct App {
     pub tokens: ThemeTokens,
     pub layout: LayoutMode,
     pub sidebar_visible: bool,
+    pub outline_visible: bool,
     pub focus_mode: bool,
+    pub search: search_ui::SearchPanel,
     pub selected: Option<PathBuf>,
     pub expanded: HashSet<PathBuf>,
     pub dialog: Option<Dialog>,
@@ -115,6 +146,7 @@ pub struct App {
     editor: Option<EditorPane>,
     editor_doc: Option<u64>,
     editor_needs_position: bool,
+    panes: pane_grid::State<PaneKind>,
     last_recovery: Instant,
     last_session: Instant,
 }
@@ -166,11 +198,13 @@ impl App {
         }
 
         let recovery = workspace.pending_recovery();
-        let layout = layout_from_settings(&settings.layout);
+        let layout = LayoutMode::from_settings(&settings.layout);
         let tokens = registry::resolve(&settings.theme, false).tokens.clone();
         let selected = workspace
             .active_document()
             .map(|document| document.path.clone());
+
+        let panes = new_pane_state(settings.split_ratio);
 
         let mut app = Self {
             workspace,
@@ -181,7 +215,9 @@ impl App {
             tokens,
             layout,
             sidebar_visible: true,
+            outline_visible: true,
             focus_mode: false,
+            search: search_ui::SearchPanel::default(),
             selected,
             expanded: HashSet::new(),
             dialog: None,
@@ -190,10 +226,14 @@ impl App {
             editor: None,
             editor_doc: None,
             editor_needs_position: true,
+            panes,
             last_recovery: Instant::now(),
             last_session: Instant::now(),
         };
 
+        app.sidebar_visible = app.settings.sidebar_visible;
+        app.outline_visible = app.settings.outline_visible;
+        app.focus_mode = app.settings.focus_mode;
         app.install_editor();
         app
     }
@@ -213,7 +253,10 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick)
+        Subscription::batch([
+            iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick),
+            iced::keyboard::listen().filter_map(shortcut_message),
+        ])
     }
 
     fn root(&self) -> Option<&Path> {
@@ -270,12 +313,264 @@ impl App {
         self.status_is_error = true;
     }
 
+    /// Copies the editor buffer, caret, and selection back into the document.
+    fn sync_editor_to_workspace(&mut self) {
+        let Some(id) = self.editor_doc else {
+            return;
+        };
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let content = editor.content();
+        let (line, column) = editor.cursor();
+        let scroll = self
+            .workspace
+            .document(id)
+            .map_or(0.0, |document| document.scroll);
+        self.workspace
+            .set_document_content(id, content, Cursor::new(line, column), scroll);
+    }
+
+    /// Copies only the caret position back to the document.
+    fn sync_editor_position(&mut self) {
+        let Some(id) = self.editor_doc else {
+            return;
+        };
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let (line, column) = editor.cursor();
+        let scroll = self
+            .workspace
+            .document(id)
+            .map_or(0.0, |document| document.scroll);
+        self.workspace
+            .set_document_position(id, Cursor::new(line, column), scroll);
+    }
+
+    fn apply_format(&mut self, action: FormatAction) -> Task<Message> {
+        if matches!(action, FormatAction::Link | FormatAction::Image) {
+            self.begin_insert_link(action == FormatAction::Image);
+            return Task::none();
+        }
+
+        let Some(editor) = &mut self.editor else {
+            self.set_error("Open a document first.");
+            return Task::none();
+        };
+        let task = editor.apply_format(action).map(Message::Editor);
+        self.sync_editor_to_workspace();
+        self.refresh_search_after_edit();
+        task
+    }
+
+    fn begin_insert_link(&mut self, image: bool) {
+        if self.editor.is_none() {
+            self.set_error("Open a document first.");
+            return;
+        }
+        self.dialog = Some(Self::new_input_dialog(
+            InputAction::InsertLink { image },
+            if image { "Insert image" } else { "Insert link" },
+            "URL",
+            "",
+            if image {
+                "images/diagram.png"
+            } else {
+                "https://example.com"
+            },
+        ));
+    }
+
+    fn insert_link(&mut self, url: &str, image: bool) -> Task<Message> {
+        let Some(editor) = &mut self.editor else {
+            self.set_error("Open a document first.");
+            return Task::none();
+        };
+        let task = editor.insert_link(url, image).map(Message::Editor);
+        self.sync_editor_to_workspace();
+        self.refresh_search_after_edit();
+        task
+    }
+
+    fn open_search(&mut self, replace: bool) -> Task<Message> {
+        self.search.open(replace);
+        self.refresh_search_matches(false);
+        iced::widget::operation::focus(search_ui::query_input_id())
+    }
+
+    fn close_search(&mut self) {
+        self.search.close();
+        if let Some(editor) = &mut self.editor {
+            editor.set_search_highlights(&[], None);
+        }
+    }
+
+    /// Re-runs the query against the editor buffer and refreshes decorations.
+    fn refresh_search_matches(&mut self, reveal: bool) {
+        if !self.search.visible {
+            return;
+        }
+        let text = match &self.editor {
+            Some(editor) => editor.content(),
+            None => return,
+        };
+        self.search.refresh(&text);
+        let current = self.search.current;
+        let start = self.search.current_match().map(|matched| matched.start);
+
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        editor.set_search_highlights(&self.search.matches, current);
+        if reveal && let Some(start) = start {
+            let _ = editor.goto_position(start);
+        }
+    }
+
+    fn refresh_search_after_edit(&mut self) {
+        if self.search.visible {
+            self.refresh_search_matches(false);
+        }
+    }
+
+    fn goto_search_match(&mut self) -> Task<Message> {
+        let Some(editor) = &mut self.editor else {
+            return Task::none();
+        };
+        let Some(start) = self.search.current_match().map(|matched| matched.start) else {
+            return Task::none();
+        };
+        let task = editor.goto_position(start).map(Message::Editor);
+        self.sync_editor_position();
+        task
+    }
+
+    fn handle_search(&mut self, message: search_ui::Message) -> Task<Message> {
+        match message {
+            search_ui::Message::QueryChanged(query) => {
+                self.search.query = query;
+                self.refresh_search_matches(true);
+                self.sync_editor_position();
+            }
+            search_ui::Message::ReplacementChanged(replacement) => {
+                self.search.replacement = replacement;
+            }
+            search_ui::Message::ToggleCaseSensitive => {
+                self.search.case_sensitive = !self.search.case_sensitive;
+                self.refresh_search_matches(true);
+                self.sync_editor_position();
+            }
+            search_ui::Message::ToggleRegex => {
+                self.search.regex = !self.search.regex;
+                self.refresh_search_matches(true);
+                self.sync_editor_position();
+            }
+            search_ui::Message::Next => {
+                self.search.next();
+                self.refresh_highlights();
+                return self.goto_search_match();
+            }
+            search_ui::Message::Previous => {
+                self.search.previous();
+                self.refresh_highlights();
+                return self.goto_search_match();
+            }
+            search_ui::Message::ReplaceCurrent => {
+                return self.replace_current_match();
+            }
+            search_ui::Message::ReplaceAll => {
+                return self.replace_all_matches();
+            }
+            search_ui::Message::Close => {
+                self.close_search();
+            }
+        }
+        Task::none()
+    }
+
+    fn refresh_highlights(&mut self) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let current = self.search.current;
+        editor.set_search_highlights(&self.search.matches, current);
+    }
+
+    fn replace_current_match(&mut self) -> Task<Message> {
+        let Some(matched) = self.search.current_match().cloned() else {
+            return Task::none();
+        };
+        let options = self.search.options();
+        let replacement = self.search.replacement.clone();
+        let query = self.search.query.clone();
+        let Some(editor) = &mut self.editor else {
+            return Task::none();
+        };
+
+        match editor.replace_match(&query, &matched, &replacement, options) {
+            Ok(task) => {
+                self.sync_editor_to_workspace();
+                self.refresh_search_matches(false);
+                task.map(Message::Editor)
+            }
+            Err(error) => {
+                self.search.error = Some(error.to_string());
+                self.set_error(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn replace_all_matches(&mut self) -> Task<Message> {
+        let query = self.search.query.clone();
+        if query.is_empty() {
+            return Task::none();
+        }
+        let replacement = self.search.replacement.clone();
+        let options = self.search.options();
+        let Some(editor) = &mut self.editor else {
+            return Task::none();
+        };
+
+        match editor.replace_all(&query, &replacement, options) {
+            Ok(task) => {
+                self.sync_editor_to_workspace();
+                self.refresh_search_matches(false);
+                task.map(Message::Editor)
+            }
+            Err(error) => {
+                self.search.error = Some(error.to_string());
+                self.set_error(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn goto_heading(&mut self, line: usize) -> Task<Message> {
+        let Some(editor) = &mut self.editor else {
+            return Task::none();
+        };
+        let task = editor.goto_position((line, 0)).map(Message::Editor);
+        self.sync_editor_position();
+        task
+    }
+
+    fn resize_panes(&mut self, event: pane_grid::ResizeEvent) {
+        self.panes.resize(event.split, event.ratio);
+        if (self.settings.split_ratio - event.ratio).abs() > 0.001 {
+            self.settings.split_ratio = event.ratio;
+            persisted_settings(&self.settings, &self.paths);
+        }
+    }
+
     /// Creates the editor widget for the active tab without applying a cursor
     /// task. Used during boot, when no task can be returned.
     fn install_editor(&mut self) {
         let Some(document) = self.workspace.active_document() else {
             self.editor = None;
             self.editor_doc = None;
+            self.close_search();
             return;
         };
 
@@ -283,9 +578,11 @@ impl App {
         let text = document.text.clone();
         let mut editor = EditorPane::new(&text, &self.tokens, &self.settings.editor_typography);
         editor.set_focus_mode(self.focus_mode);
+        editor.focus();
         self.editor = Some(editor);
         self.editor_doc = Some(id);
         self.editor_needs_position = true;
+        self.refresh_search_after_edit();
     }
 
     /// Rebuilds the editor when the active tab changed.
@@ -293,6 +590,7 @@ impl App {
         let Some(document) = self.workspace.active_document() else {
             self.editor = None;
             self.editor_doc = None;
+            self.close_search();
             return Task::none();
         };
 
@@ -306,8 +604,10 @@ impl App {
         let scroll = document.scroll;
         let mut editor = EditorPane::new(&text, &self.tokens, &self.settings.editor_typography);
         editor.set_focus_mode(self.focus_mode);
+        editor.focus();
         self.editor = Some(editor);
         self.editor_doc = Some(id);
+        self.refresh_search_after_edit();
         self.restore_editor_position_for(id, cursor, scroll)
     }
 
@@ -347,6 +647,7 @@ impl App {
         let Some(document) = self.workspace.document(id) else {
             self.editor = None;
             self.editor_doc = None;
+            self.close_search();
             return Task::none();
         };
 
@@ -360,12 +661,26 @@ impl App {
         let reset = editor.reset(&text).map(Message::Editor);
         let goto = editor.goto_position(cursor).map(Message::Editor);
         let scroll = editor.scroll_to_vertical(scroll).map(Message::Editor);
+        self.refresh_search_after_edit();
         Task::batch([reset, goto, scroll])
     }
 
     fn handle_editor(&mut self, message: EditorMessage) -> Task<Message> {
-        if matches!(message, EditorMessage::WriteRequested) {
-            return self.save_active();
+        match &message {
+            EditorMessage::WriteRequested => return self.save_active(),
+            EditorMessage::OpenSearch => return self.open_search(false),
+            EditorMessage::OpenSearchReplace => return self.open_search(true),
+            EditorMessage::CloseSearch if self.search.visible => {
+                self.close_search();
+                return Task::none();
+            }
+            EditorMessage::FindNext if self.search.visible => {
+                return self.handle_search(search_ui::Message::Next);
+            }
+            EditorMessage::FindPrevious if self.search.visible => {
+                return self.handle_search(search_ui::Message::Previous);
+            }
+            _ => {}
         }
 
         let scroll = match &message {
@@ -396,8 +711,13 @@ impl App {
 
         if may_edit {
             let content = editor.content();
+            let search_visible = self.search.visible;
             self.workspace
-                .set_document_content(id, content, cursor, scroll);
+                .set_document_content(id, content.clone(), cursor, scroll);
+            if search_visible {
+                self.search.refresh(&content);
+                self.refresh_highlights();
+            }
         } else {
             self.workspace.set_document_position(id, cursor, scroll);
         }
@@ -730,6 +1050,14 @@ impl App {
                 }
                 Task::none()
             }
+            InputAction::InsertLink { image } => {
+                let url = value.trim();
+                if url.is_empty() {
+                    self.set_error("Enter a URL.");
+                    return Task::none();
+                }
+                self.insert_link(url, image)
+            }
         }
     }
 
@@ -819,19 +1147,95 @@ impl App {
     }
 }
 
+fn new_pane_state(ratio: f32) -> pane_grid::State<PaneKind> {
+    let (mut panes, editor_pane) = pane_grid::State::new(PaneKind::Editor);
+    if let Some((_, split)) = panes.split(pane_grid::Axis::Vertical, editor_pane, PaneKind::Preview)
+    {
+        panes.resize(split, ratio);
+    }
+    panes
+}
+
 fn persisted_settings(settings: &Settings, paths: &AppPaths) {
     if let Err(error) = settings.save(&paths.settings_file()) {
         log::warn!("could not save settings: {error}");
     }
 }
 
-fn layout_from_settings(layout: &str) -> LayoutMode {
-    match layout {
-        "editor-only" => LayoutMode::EditorOnly,
-        "preview-only" => LayoutMode::PreviewOnly,
-        "read" => LayoutMode::Read,
-        _ => LayoutMode::SideBySide,
+/// Maps fixed application shortcuts to messages.
+///
+/// The editor consumes the shortcuts it owns (save, built-in find, undo), so
+/// this listener only sees keys the editor left ignored. The editor adapter
+/// still routes its find messages into the shared search panel.
+fn shortcut_message(event: iced::keyboard::Event) -> Option<Message> {
+    let iced::keyboard::Event::KeyPressed {
+        key,
+        modifiers,
+        repeat,
+        ..
+    } = event
+    else {
+        return None;
+    };
+
+    shortcut_for(&key, modifiers, repeat)
+}
+
+fn shortcut_for(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+    repeat: bool,
+) -> Option<Message> {
+    if repeat {
+        return None;
     }
+
+    if matches!(
+        key,
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+    ) {
+        return Some(Message::Escape);
+    }
+
+    let command = if cfg!(target_os = "macos") {
+        modifiers.command()
+    } else {
+        modifiers.control()
+    };
+    if !command || modifiers.alt() {
+        return None;
+    }
+
+    let iced::keyboard::Key::Character(character) = key else {
+        return None;
+    };
+    let character = character.to_lowercase();
+    let shift = modifiers.shift();
+
+    Some(match (character.as_str(), shift) {
+        ("s", false) => Message::Save,
+        ("f", false) => Message::OpenFind,
+        ("h", false) => Message::OpenReplace,
+        ("b", false) => Message::Format(FormatAction::Bold),
+        ("i", false) => Message::Format(FormatAction::Italic),
+        ("i", true) => Message::Format(FormatAction::Image),
+        ("x", true) => Message::Format(FormatAction::Strikethrough),
+        ("8", true) => Message::Format(FormatAction::BulletList),
+        ("7", true) => Message::Format(FormatAction::OrderedList),
+        ("9", true) => Message::Format(FormatAction::TaskList),
+        (".", true) => Message::Format(FormatAction::Blockquote),
+        ("`", false) => Message::Format(FormatAction::InlineCode),
+        ("`", true) => Message::Format(FormatAction::CodeBlock),
+        ("t", false) => Message::Format(FormatAction::Table),
+        ("k", false) => Message::Format(FormatAction::Link),
+        ("1", false) => Message::Format(FormatAction::Heading(1)),
+        ("2", false) => Message::Format(FormatAction::Heading(2)),
+        ("3", false) => Message::Format(FormatAction::Heading(3)),
+        ("4", false) => Message::Format(FormatAction::Heading(4)),
+        ("5", false) => Message::Format(FormatAction::Heading(5)),
+        ("6", false) => Message::Format(FormatAction::Heading(6)),
+        _ => return None,
+    })
 }
 
 /// Every user-visible action flows through this enum.
@@ -869,7 +1273,15 @@ pub enum Message {
     DiscardAllRecovery,
     ToggleLayout(LayoutMode),
     ToggleSidebar,
+    ToggleOutline,
     ToggleFocusMode,
+    Format(FormatAction),
+    OpenFind,
+    OpenReplace,
+    Search(search_ui::Message),
+    Outline(outline::Message),
+    PaneResized(pane_grid::ResizeEvent),
+    Escape,
     Tick,
     Quit,
 }
@@ -1131,13 +1543,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ToggleLayout(layout) => {
             app.layout = layout;
-            app.settings.layout = match layout {
-                LayoutMode::EditorOnly => "editor-only",
-                LayoutMode::SideBySide => "side-by-side",
-                LayoutMode::PreviewOnly => "preview-only",
-                LayoutMode::Read => "read",
-            }
-            .to_string();
+            app.settings.layout = layout.as_settings().to_string();
             persisted_settings(&app.settings, &app.paths);
             app.set_status(format!("{} layout", layout.label()));
             Task::none()
@@ -1145,6 +1551,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ToggleSidebar => {
             app.sidebar_visible = !app.sidebar_visible;
             app.settings.sidebar_visible = app.sidebar_visible;
+            persisted_settings(&app.settings, &app.paths);
+            Task::none()
+        }
+        Message::ToggleOutline => {
+            app.outline_visible = !app.outline_visible;
+            app.settings.outline_visible = app.outline_visible;
             persisted_settings(&app.settings, &app.paths);
             Task::none()
         }
@@ -1160,6 +1572,27 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             } else {
                 "Focus mode off"
             });
+            Task::none()
+        }
+        Message::Format(action) => app.apply_format(action),
+        Message::OpenFind => app.open_search(false),
+        Message::OpenReplace => app.open_search(true),
+        Message::Search(message) => app.handle_search(message),
+        Message::Outline(message) => match message {
+            outline::Message::Goto(line) => app.goto_heading(line),
+        },
+        Message::PaneResized(event) => {
+            app.resize_panes(event);
+            Task::none()
+        }
+        Message::Escape => {
+            if app.search.visible {
+                app.close_search();
+            } else if app.dialog.is_some() {
+                app.dialog = None;
+            } else if app.compare.is_some() {
+                app.compare = None;
+            }
             Task::none()
         }
         Message::Tick => app.tick(),
@@ -1241,9 +1674,17 @@ fn workspace_view<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Mess
         content = content.push(banner);
     }
 
+    if app.search.visible {
+        content = content.push(app.search.view(tokens).map(Message::Search));
+    }
+
+    if app.layout.shows_editor() {
+        content = content.push(formatting_toolbar(tokens));
+    }
+
     let selected = app.selected.as_ref();
     let main: Element<'a, Message> = if app.sidebar_visible {
-        row![
+        let mut panes = row![
             container(
                 sidebar::view(app.workspace.tree(), &app.expanded, selected, tokens)
                     .map(Message::Sidebar)
@@ -1261,8 +1702,22 @@ fn workspace_view<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Mess
             }),
             content_area(app, tokens),
         ]
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+        if app.outline_visible {
+            let headings = app
+                .workspace
+                .active_document()
+                .map(|document| document.outline())
+                .unwrap_or_default();
+            let active_line = app
+                .workspace
+                .active_document()
+                .map(|document| document.cursor.line);
+            panes = panes.push(outline::view(&headings, active_line, tokens).map(Message::Outline));
+        }
+
+        panes.into()
     } else {
         content_area(app, tokens)
     };
@@ -1277,29 +1732,95 @@ fn toolbar<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message> {
         |name| name.to_string_lossy().into_owned(),
     );
 
+    let mut controls = row![
+        button(text("Open folder").size(12)).on_press(Message::OpenFolder),
+        button(text("Save").size(12)).on_press(Message::Save),
+        button(text("Save all").size(12)).on_press(Message::SaveAll),
+        button(text("New").size(12)).on_press(Message::NewFile),
+        button(text("Folder").size(12)).on_press(Message::NewFolder),
+        button(text("Import").size(12)).on_press(Message::Import),
+        button(text("Rename").size(12)).on_press(Message::Rename),
+        button(text("Move").size(12)).on_press(Message::Move),
+        button(text("Delete").size(12)).on_press(Message::Delete),
+        button(text("Find").size(12)).on_press(Message::OpenFind),
+        button(text("Replace").size(12)).on_press(Message::OpenReplace),
+        Space::new().width(Length::Fill),
+        text(title).size(12).color(tokens.muted),
+    ]
+    .spacing(4)
+    .align_y(iced::Alignment::Center);
+
+    for mode in LayoutMode::ALL {
+        let active = app.layout == mode;
+        controls = controls.push(
+            button(text(mode.label()).size(12))
+                .on_press(Message::ToggleLayout(mode))
+                .style(move |theme, status| {
+                    let mut style = button::text(theme, status);
+                    if active {
+                        style.background = Some(tokens.accent.into());
+                        style.text_color = tokens.background;
+                    }
+                    style
+                }),
+        );
+    }
+
+    controls = controls.push(button(text("Sidebar").size(12)).on_press(Message::ToggleSidebar));
+    controls = controls.push(button(text("Outline").size(12)).on_press(Message::ToggleOutline));
+    controls = controls.push(button(text("Focus").size(12)).on_press(Message::ToggleFocusMode));
+
+    container(controls)
+        .padding([6, 8])
+        .width(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(tokens.surface.into()),
+            border: iced::border::Border {
+                color: tokens.border,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn formatting_toolbar<'a>(tokens: &'a ThemeTokens) -> Element<'a, Message> {
+    let actions = [
+        ("Bold", FormatAction::Bold),
+        ("Italic", FormatAction::Italic),
+        ("H1", FormatAction::Heading(1)),
+        ("H2", FormatAction::Heading(2)),
+        ("Strike", FormatAction::Strikethrough),
+        ("List", FormatAction::BulletList),
+        ("Numbered", FormatAction::OrderedList),
+        ("Check", FormatAction::TaskList),
+        ("Quote", FormatAction::Blockquote),
+        ("Code", FormatAction::InlineCode),
+        ("Code block", FormatAction::CodeBlock),
+        ("Table", FormatAction::Table),
+        ("Link", FormatAction::Link),
+        ("Image", FormatAction::Image),
+    ];
+
+    let mut controls = row![].spacing(3).align_y(iced::Alignment::Center);
+    for (label, action) in actions {
+        controls = controls.push(
+            button(text(label).size(11))
+                .padding([3, 6])
+                .on_press(Message::Format(action)),
+        );
+    }
+
     container(
-        row![
-            button(text("Open folder").size(12)).on_press(Message::OpenFolder),
-            button(text("Save").size(12)).on_press(Message::Save),
-            button(text("Save all").size(12)).on_press(Message::SaveAll),
-            button(text("New").size(12)).on_press(Message::NewFile),
-            button(text("Folder").size(12)).on_press(Message::NewFolder),
-            button(text("Import").size(12)).on_press(Message::Import),
-            button(text("Rename").size(12)).on_press(Message::Rename),
-            button(text("Move").size(12)).on_press(Message::Move),
-            button(text("Delete").size(12)).on_press(Message::Delete),
-            Space::new().width(Length::Fill),
-            text(title).size(12).color(tokens.muted),
-            button(text("Sidebar").size(12)).on_press(Message::ToggleSidebar),
-            button(text("Focus").size(12)).on_press(Message::ToggleFocusMode),
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center),
+        scrollable(controls).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::default(),
+        )),
     )
-    .padding([6, 8])
+    .padding([4, 8])
     .width(Length::Fill)
     .style(move |_| container::Style {
-        background: Some(tokens.surface.into()),
+        background: Some(tokens.background.into()),
         border: iced::border::Border {
             color: tokens.border,
             width: 1.0,
@@ -1457,20 +1978,40 @@ fn content_area<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Messag
         return empty_workspace(app, tokens);
     }
 
-    let editor = editor_view(app, tokens);
-    if app.layout.shows_editor() && app.layout.shows_preview() {
-        row![
-            container(editor)
-                .width(Length::FillPortion(3))
-                .height(Length::Fill),
-            preview_placeholder(tokens),
-        ]
-        .height(Length::Fill)
-        .into()
-    } else if app.layout.shows_preview() && !app.layout.shows_editor() {
-        preview_placeholder(tokens)
-    } else {
-        editor
+    match app.layout {
+        LayoutMode::EditorOnly => editor_view(app, tokens),
+        LayoutMode::PreviewOnly | LayoutMode::Read => preview_placeholder(tokens),
+        LayoutMode::SideBySide => {
+            let tokens_for_style = tokens;
+            pane_grid(&app.panes, |_pane, kind, _maximized| {
+                let content = match kind {
+                    PaneKind::Editor => editor_view(app, tokens),
+                    PaneKind::Preview => preview_placeholder(tokens),
+                };
+                pane_grid::Content::new(content)
+            })
+            .spacing(2)
+            .on_resize(6.0, Message::PaneResized)
+            .style(move |_| pane_grid::Style {
+                hovered_region: pane_grid::Highlight {
+                    background: tokens_for_style.selection.into(),
+                    border: iced::border::Border {
+                        color: tokens_for_style.accent,
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                },
+                picked_split: pane_grid::Line {
+                    color: tokens_for_style.accent,
+                    width: 2.0,
+                },
+                hovered_split: pane_grid::Line {
+                    color: tokens_for_style.accent,
+                    width: 2.0,
+                },
+            })
+            .into()
+        }
     }
 }
 
@@ -1504,7 +2045,7 @@ fn preview_placeholder<'a>(tokens: &'a ThemeTokens) -> Element<'a, Message> {
     )
     .center_x(Length::Fill)
     .center_y(Length::Fill)
-    .width(Length::FillPortion(2))
+    .width(Length::Fill)
     .height(Length::Fill)
     .style(move |_| container::Style {
         background: Some(tokens.surface.into()),
@@ -1562,9 +2103,15 @@ fn status_bar<'a>(app: &'a App, tokens: &'a ThemeTokens) -> Element<'a, Message>
     let info = match app.workspace.active_document() {
         Some(document) => {
             let (line, column) = document.cursor.display();
+            let selection = app
+                .editor
+                .as_ref()
+                .and_then(|editor| editor.selection())
+                .filter(|(start, end)| start != end)
+                .and_then(|(start, end)| document.selection_stats(start, end));
             status::StatusInfo {
                 stats: document.stats(),
-                selection: None,
+                selection,
                 cursor_line: line,
                 cursor_column: column,
                 reading_progress: None,
@@ -1730,4 +2277,167 @@ pub fn run() -> iced::Result {
         })
         .antialiasing(true)
         .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::keyboard::{Key, Modifiers, key};
+
+    fn character(value: &str) -> Key {
+        Key::Character(value.into())
+    }
+
+    #[test]
+    fn fixed_formatting_shortcuts_map_to_actions() {
+        let command = Modifiers::COMMAND;
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+
+        assert!(matches!(
+            shortcut_for(&character("b"), command, false),
+            Some(Message::Format(FormatAction::Bold))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("i"), command, false),
+            Some(Message::Format(FormatAction::Italic))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("i"), shift, false),
+            Some(Message::Format(FormatAction::Image))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("x"), shift, false),
+            Some(Message::Format(FormatAction::Strikethrough))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("8"), shift, false),
+            Some(Message::Format(FormatAction::BulletList))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("7"), shift, false),
+            Some(Message::Format(FormatAction::OrderedList))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("9"), shift, false),
+            Some(Message::Format(FormatAction::TaskList))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("."), shift, false),
+            Some(Message::Format(FormatAction::Blockquote))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("`"), command, false),
+            Some(Message::Format(FormatAction::InlineCode))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("`"), shift, false),
+            Some(Message::Format(FormatAction::CodeBlock))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("t"), command, false),
+            Some(Message::Format(FormatAction::Table))
+        ));
+        assert!(matches!(
+            shortcut_for(&character("k"), command, false),
+            Some(Message::Format(FormatAction::Link))
+        ));
+        for level in 1..=6 {
+            assert!(matches!(
+                shortcut_for(&character(&level.to_string()), command, false),
+                Some(Message::Format(FormatAction::Heading(found))) if found == level
+            ));
+        }
+    }
+
+    #[test]
+    fn file_and_search_shortcuts_are_fixed() {
+        assert!(matches!(
+            shortcut_for(&character("s"), Modifiers::COMMAND, false),
+            Some(Message::Save)
+        ));
+        assert!(matches!(
+            shortcut_for(&character("f"), Modifiers::COMMAND, false),
+            Some(Message::OpenFind)
+        ));
+        assert!(matches!(
+            shortcut_for(&character("h"), Modifiers::COMMAND, false),
+            Some(Message::OpenReplace)
+        ));
+        assert!(matches!(
+            shortcut_for(&Key::Named(key::Named::Escape), Modifiers::NONE, false),
+            Some(Message::Escape)
+        ));
+    }
+
+    #[test]
+    fn shortcuts_require_the_command_modifier_and_ignore_repeats() {
+        assert!(shortcut_for(&character("b"), Modifiers::NONE, false).is_none());
+        assert!(shortcut_for(&character("b"), Modifiers::COMMAND, true).is_none());
+        assert!(
+            shortcut_for(&character("b"), Modifiers::COMMAND | Modifiers::ALT, false).is_none()
+        );
+    }
+
+    #[test]
+    fn editor_layouts_and_panels_build_a_view() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("notes");
+        std::fs::create_dir_all(&root).expect("notes");
+        let path = root.join("note.md");
+        std::fs::write(&path, "# Title\n\n## Section\n\nBody\n").expect("fixture");
+
+        let paths = AppPaths::with_base(tmp.path().join("app"));
+        let mut workspace = WorkspaceState::new(paths.session_file(), paths.recovery_dir());
+        workspace.open_folder(&root).expect("open folder");
+        workspace.open_document(&path).expect("open document");
+
+        let mut app = App {
+            workspace,
+            settings: Settings::default(),
+            paths,
+            status: String::from("Ready"),
+            status_is_error: false,
+            tokens: ThemeTokens::light(),
+            layout: LayoutMode::SideBySide,
+            sidebar_visible: true,
+            outline_visible: true,
+            focus_mode: false,
+            search: search_ui::SearchPanel::default(),
+            selected: Some(path.clone()),
+            expanded: HashSet::new(),
+            dialog: None,
+            compare: None,
+            recovery: Vec::new(),
+            editor: None,
+            editor_doc: None,
+            editor_needs_position: true,
+            panes: new_pane_state(0.5),
+            last_recovery: Instant::now(),
+            last_session: Instant::now(),
+        };
+        app.install_editor();
+
+        for layout in LayoutMode::ALL {
+            app.layout = layout;
+            let _ = view(&app);
+        }
+
+        app.layout = LayoutMode::SideBySide;
+        if let Some(editor) = &mut app.editor {
+            let _ = editor.select_range((0, 0), (0, 5));
+        }
+        app.search.open(true);
+        app.search.query = "Body".into();
+        app.search.refresh("# Title\n\n## Section\n\nBody\n");
+        let _ = view(&app);
+
+        app.dialog = Some(App::new_input_dialog(
+            InputAction::InsertLink { image: false },
+            "Insert link",
+            "URL",
+            "",
+            "https://example.com",
+        ));
+        let _ = view(&app);
+    }
 }

@@ -204,6 +204,79 @@ impl CodeEditor {
         }
     }
 
+    /// Draws host-provided search decorations over visible lines.
+    ///
+    /// Unlike the built-in search state, these ranges carry their own end
+    /// column, so regex matches of different lengths can be highlighted.
+    pub(super) fn draw_host_highlights(
+        &self,
+        frame: &mut canvas::Frame,
+        ctx: &RenderContext,
+        start_visual_idx: usize,
+        end_visual_idx: usize,
+    ) {
+        if self.host_highlights.is_empty() {
+            return;
+        }
+
+        let start_visual_idx = start_visual_idx.min(ctx.visual_lines.len());
+        let end_visual_idx = end_visual_idx.min(ctx.visual_lines.len());
+        if start_visual_idx >= end_visual_idx {
+            return;
+        }
+
+        let min_line = ctx.visual_lines[start_visual_idx].logical_line;
+        let max_line = ctx.visual_lines[end_visual_idx - 1].logical_line;
+
+        for (index, (start, end)) in self.host_highlights.iter().enumerate() {
+            if start.0 > max_line || end.0 < min_line {
+                continue;
+            }
+
+            let color = if self.host_highlight_current == Some(index) {
+                self.style.search_match_current_color
+            } else {
+                self.style.search_match_color
+            };
+
+            let start_visual =
+                WrappingCalculator::logical_to_visual(ctx.visual_lines, start.0, start.1);
+            let end_visual =
+                WrappingCalculator::logical_to_visual(ctx.visual_lines, end.0, end.1);
+
+            let (Some(start_v), Some(end_v)) = (start_visual, end_visual) else {
+                continue;
+            };
+            if start_v > end_v || start_v >= end_visual_idx {
+                continue;
+            }
+
+            for visual_idx in start_v..=end_v.min(end_visual_idx - 1) {
+                let vl = &ctx.visual_lines[visual_idx];
+                let segment_start = if visual_idx == start_v {
+                    start.1
+                } else {
+                    vl.start_col
+                };
+                let segment_end = if visual_idx == end_v {
+                    end.1
+                } else {
+                    vl.end_col
+                };
+                if segment_start < segment_end {
+                    self.fill_highlight_segment(
+                        frame,
+                        ctx,
+                        visual_idx,
+                        vl,
+                        (segment_start, segment_end),
+                        color,
+                    );
+                }
+            }
+        }
+    }
+
     /// Draws the selection highlight for a single cursor range.
     ///
     /// # Arguments

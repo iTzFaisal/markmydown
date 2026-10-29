@@ -74,6 +74,7 @@ impl CodeEditor {
             && !text_content.is_empty()
             && !modifiers.control()
             && !modifiers.alt()
+            && !modifiers.command()
         {
             // Check if it's a printable character (not a control character)
             // This filters out Enter (\n), Tab (\t), Delete (U+007F), etc.
@@ -178,6 +179,7 @@ impl CodeEditor {
             _ => {
                 if !modifiers.control()
                     && !modifiers.alt()
+                    && !modifiers.command()
                     && let keyboard::Key::Character(c) = key
                     && !c.is_empty()
                 {
@@ -435,6 +437,28 @@ mod tests {
     use crate::canvas_editor::metrics::compare_floats;
     use iced::event;
     use std::cmp::Ordering;
+
+    #[test]
+    fn command_modified_text_is_left_for_the_host() {
+        let mut editor = CodeEditor::new("abc", "txt");
+        editor.request_focus();
+        editor.has_canvas_focus = true;
+
+        let key = keyboard::Key::Character("b".into());
+        let text: Option<iced::advanced::graphics::core::SmolStr> = Some("b".into());
+        let handled = editor.handle_keyboard_event(
+            &key,
+            &key,
+            &keyboard::Modifiers::COMMAND,
+            &text,
+            Rectangle::default(),
+            &mouse::Cursor::Unavailable,
+        );
+        assert!(
+            handled.is_none(),
+            "Cmd/Ctrl+character must be handled by the host shortcut layer"
+        );
+    }
 
     #[test]
     fn test_vim_navigation_keyboard_route_uses_dedicated_message() {
