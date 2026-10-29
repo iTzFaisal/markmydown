@@ -134,9 +134,26 @@ Without Apple Developer and Windows signing certificates:
 - macOS artifacts are unsigned and not notarized; users must use the
   Gatekeeper "Open Anyway" flow.
 - Windows artifacts are unsigned; SmartScreen may warn.
+- Linux artifacts run without signing.
 - Version, file associations, and update-feed checks can still be verified.
 - Signature verification remains pending and must be repeated once
   certificates are configured.
+
+Run the unsigned packages:
+
+```bash
+# macOS (after copying markmydown.app to /Applications)
+xattr -dr com.apple.quarantine /Applications/markmydown.app
+open /Applications/markmydown.app
+
+# Linux AppImage
+chmod +x markmydown-*.AppImage
+./markmydown-*.AppImage
+```
+
+On macOS you can also right-click the app and choose **Open** the first time.
+On Windows, choose **More info → Run anyway** if SmartScreen warns. Locally
+built binaries run without these steps because they carry no quarantine flag.
 
 Add these repository secrets to produce signed artifacts:
 
@@ -146,6 +163,39 @@ Add these repository secrets to produce signed artifacts:
 | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: …` identity |
 | `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Notarization credentials |
 | `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Base64 `.pfx` and password |
+
+### Versioning and releases
+
+The app version lives in the workspace manifest:
+
+```toml
+# Cargo.toml
+[workspace.package]
+version = "0.1.1"
+```
+
+The app crate inherits it with `version.workspace = true`. To bump:
+
+```bash
+# 1. Edit the workspace version.
+# 2. Refresh the lockfile entry.
+cargo check -p markmydown
+# 3. Commit the manifest and lockfile.
+git add Cargo.toml Cargo.lock
+git commit -m "release: v0.1.1"
+# 4. Push the tag that triggers the Release workflow.
+git tag v0.1.1
+git push origin main --tags
+```
+
+For an unsigned release candidate, use a pre-release version and tag, such as
+`0.1.1-rc.1` and `v0.1.1-rc.1`. The workflow marks tags containing `-rc` as
+pre-releases and builds the same installers without requiring signing secrets.
+You can also run it from the command line:
+
+```bash
+gh workflow run Release --ref main -f tag=v0.1.1-rc.1
+```
 
 ## Documentation
 
