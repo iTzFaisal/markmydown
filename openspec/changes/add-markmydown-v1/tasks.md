@@ -85,13 +85,13 @@
 
 ## 7. Desktop platform and packaging
 
-- [ ] 7.1 Implement file associations, open-with, and command-line file paths; verify on macOS, Windows, and Linux.
-- [ ] 7.2 Configure `cargo-packager` for macOS, Windows, and Linux installers; verify install and uninstall on each platform.
-- [ ] 7.3 Implement update checks and installation via `self_update` and GitHub Releases; verify available, install, and offline scenarios.
-- [ ] 7.4 Add macOS signing and notarization plus Windows signing to CI; verify signed artifacts pass platform checks.
+- [ ] 7.1 Implement file associations, open-with, and command-line file paths; verify on macOS, Windows, and Linux. Pending Windows/Linux platform testing; macOS file associations and CLI launch verified.
+- [ ] 7.2 Configure `cargo-packager` for macOS, Windows, and Linux installers; verify install and uninstall on each platform. Pending Windows/Linux install/uninstall testing; macOS `.app`/`.dmg` packaging and DMG contents verified.
+- [ ] 7.3 Implement update checks and installation via `self_update` and GitHub Releases; verify available, install, and offline scenarios. Live feed verified reachable with no releases yet; available/install verification pending the first published release.
+- [ ] 7.4 Add macOS signing and notarization plus Windows signing to CI; verify signed artifacts pass platform checks. Blocked pending Apple Developer and Windows signing certificates.
 - [x] 7.5 Verify security and privacy behavior: no network on edit, no script execution, and update metadata only; record results.
 - [x] 7.6 Implement local diagnostics logs and the open-log-folder action; verify log creation, folder opening, and no document content in logs.
-- [ ] 7.7 Add a cross-platform release workflow that builds and uploads installers; verify artifacts for all three platforms.
+- [ ] 7.7 Add a cross-platform release workflow that builds and uploads installers; verify artifacts for all three platforms. Workflow is ready; pending the first tagged GitHub Actions run.
 
 ## 8. Integration and release readiness
 
@@ -99,7 +99,7 @@
 - [x] 8.2 Benchmark a 1 MB document: open under 200 ms, keystroke under 16 ms, preview update under 80 ms, and export time recorded; fix regressions above these thresholds.
 - [x] 8.3 Audit keyboard navigation, IME, and RTL behavior; document gaps and verify the app remains usable without a mouse.
 - [x] 8.4 Write the README with install, build, and usage instructions; verify the documented commands work from a clean checkout.
-- [ ] 8.5 Build release candidates for macOS, Windows, and Linux; verify version, signatures, file associations, and update checks.
+- [ ] 8.5 Build release candidates for macOS, Windows, and Linux; verify version, signatures, file associations, and update checks. Pending signed cross-platform release candidates; unsigned artifacts can be produced by the release workflow.
 
 ## Workflow follow-up
 

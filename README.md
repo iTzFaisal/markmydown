@@ -37,10 +37,16 @@ storage.
 ## Build and run
 
 ```bash
-git clone https://github.com/markmydown/markmydown.git
+git clone https://github.com/iTzFaisal/markmydown.git
 cd markmydown
 cargo build -p markmydown --release
 cargo run -p markmydown --release
+```
+
+Check the built version with:
+
+```bash
+markmydown --version
 ```
 
 Open a folder with the toolbar or sidebar, or pass a folder or document on the
@@ -116,6 +122,30 @@ notarization; Windows uses `signtool` with a certificate thumbprint.
 
 Unsigned local builds are still fully functional. Signed release verification
 requires the platform signing credentials described in the workflow file.
+
+### Release candidates without signing certificates
+
+Push a pre-release tag such as `v0.1.0-rc.1`, or run the **Release** workflow
+manually with that tag. The workflow builds unsigned macOS, Windows, and Linux
+artifacts, uploads them, and marks tags containing `-rc` as pre-releases.
+
+Without Apple Developer and Windows signing certificates:
+
+- macOS artifacts are unsigned and not notarized; users must use the
+  Gatekeeper "Open Anyway" flow.
+- Windows artifacts are unsigned; SmartScreen may warn.
+- Version, file associations, and update-feed checks can still be verified.
+- Signature verification remains pending and must be repeated once
+  certificates are configured.
+
+Add these repository secrets to produce signed artifacts:
+
+| Secret | Purpose |
+|---|---|
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` | Developer ID `.p12` certificate and password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: …` identity |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Notarization credentials |
+| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Base64 `.pfx` and password |
 
 ## Documentation
 

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["markmydown contributors"]
-repository = "https://github.com/markmydown/markmydown"
+repository = "https://github.com/iTzFaisal/markmydown"
 
 [workspace.dependencies]
 iced = { version = "=0.14.0", features = ["advanced", "canvas", "highlighter", "image", "markdown", "smol", "svg"] }

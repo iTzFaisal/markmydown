@@ -8,7 +8,7 @@ use self_update::backends::github;
 use self_update::cargo_crate_version;
 
 /// Repository that publishes signed release artifacts.
-pub const REPO_OWNER: &str = "markmydown";
+pub const REPO_OWNER: &str = "iTzFaisal";
 pub const REPO_NAME: &str = "markmydown";
 pub const BIN_NAME: &str = "markmydown";
 
@@ -95,5 +95,15 @@ mod tests {
 
         assert_eq!(info.version, "1.2.3");
         assert!(info.notes.is_some());
+    }
+
+    #[test]
+    #[ignore = "network; run manually against the live release feed"]
+    fn live_release_feed_is_reachable() {
+        let result = check();
+        assert!(
+            result.is_ok(),
+            "the live GitHub release feed must be reachable: {result:?}"
+        );
     }
 }

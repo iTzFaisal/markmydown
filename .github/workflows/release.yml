@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (for example v0.1.0-rc.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -107,6 +112,14 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: cargo packager --release
 
+      - name: Verify version (Unix)
+        if: runner.os != 'Windows'
+        run: target/release/markmydown --version
+
+      - name: Verify version (Windows)
+        if: runner.os == 'Windows'
+        run: target\release\markmydown.exe --version
+
       - name: Build update archive (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -168,6 +181,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-rc') }}
           files: artifacts/**/*
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -163,7 +163,11 @@ pub fn move_entry(root: &Path, path: &Path, destination_dir: &Path) -> Result<Pa
 pub fn delete_to_trash(root: &Path, path: &Path) -> Result<(), OpsError> {
     ensure_mutable_entry(root, path)?;
 
+    #[cfg(target_os = "macos")]
     let mut context = trash::TrashContext::default();
+    #[cfg(not(target_os = "macos"))]
+    let context = trash::TrashContext::default();
+
     #[cfg(target_os = "macos")]
     {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
