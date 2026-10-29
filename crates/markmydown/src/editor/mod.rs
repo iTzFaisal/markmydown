@@ -89,6 +89,19 @@ impl EditorPane {
         self.editor.line_count()
     }
 
+    /// The logical source line currently at the top of the editor viewport.
+    pub fn first_visible_line(&self) -> usize {
+        self.editor.first_visible_line()
+    }
+
+    /// Approximate vertical offset for a logical line.
+    ///
+    /// Wrapped lines can make this an underestimate; the preview sync treats
+    /// it as a stable anchor rather than an exact pixel mapping.
+    pub fn vertical_offset_for_line(&self, line: usize) -> f32 {
+        line as f32 * self.editor.line_height()
+    }
+
     pub fn set_focus_mode(&mut self, enabled: bool) {
         self.editor.set_focus_mode(enabled);
     }

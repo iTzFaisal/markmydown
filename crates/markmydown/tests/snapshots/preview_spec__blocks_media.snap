@@ -1,0 +1,6 @@
+---
+source: crates/markmydown/tests/preview_spec.rs
+expression: "html_body(&document, Some(tmp.path()))"
+---
+<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="A picture"></p>
+<p><a href="https://example.com">External</a> and <a href="#section">local</a>.</p>

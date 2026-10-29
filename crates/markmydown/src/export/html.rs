@@ -283,9 +283,9 @@ fn render_inlines(inlines: &[Inline], options: &HtmlOptions<'_>, out: &mut Strin
                 ));
             }
             Inline::Math(source) => {
-                out.push_str("<code class=\"mmd-inline-math\">");
+                out.push_str("<code class=\"mmd-inline-math\">$");
                 push_escaped(out, source);
-                out.push_str("</code>");
+                out.push_str("$</code>");
             }
             Inline::Html(html) => out.push_str(html),
         }

@@ -282,7 +282,12 @@ impl Inline {
         let mut out = String::new();
         for inline in inlines {
             match inline {
-                Self::Text(text) | Self::Code(text) | Self::Math(text) => out.push_str(text),
+                Self::Text(text) | Self::Code(text) => out.push_str(text),
+                Self::Math(text) => {
+                    out.push('$');
+                    out.push_str(text);
+                    out.push('$');
+                }
                 Self::Emphasis(children)
                 | Self::Strong(children)
                 | Self::Strikethrough(children)

@@ -37,7 +37,6 @@ pub fn sanitize_html(html: &str) -> String {
             "code",
             "pre",
         ])
-        .rm_clean_content_tags(&["script", "style"])
         .link_rel(Some("noopener noreferrer"))
         .url_schemes(HashSet::from(["http", "https", "mailto"]))
         .clean(html)

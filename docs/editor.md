@@ -32,7 +32,8 @@ The intentional patch surface is deliberately small:
    - normalized selection access,
    - selection-preserving edits as single undo steps,
    - whole-document replacement for replace-all and safe reloads,
-   - programmatic selection, caret, line, and scroll access.
+   - programmatic selection, caret, line, and scroll access,
+   - first-visible-line and line-height accessors for preview scroll sync.
 2. **Focus mode** (`src/canvas_editor/host_api.rs`,
    `editing/cursor.rs`, `render/text.rs`):
    - `set_focus_mode` and `set_focus_dim_strength`,
@@ -238,10 +239,9 @@ cargo test --workspace
 
 ## Known limits in this milestone
 
-- The preview pane is still a placeholder until the preview milestone; the
-  layout, splitter, and persistence are in place.
-- Read mode uses the preview-only layout; reading typography, outline progress,
-  and scroll synchronization arrive with the preview milestone.
+- Read mode depends on the preview model; very long documents use virtualized
+  blocks, so scroll mapping is approximate rather than pixel-perfect.
 - The in-app shortcut reference and command palette arrive in the appearance
   and onboarding milestone.
 - The search panel is document-scoped; workspace-wide search is not in v1.
+- Inline math is literal text; only block math is typeset in v1.

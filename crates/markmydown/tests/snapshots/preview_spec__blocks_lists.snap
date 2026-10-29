@@ -1,0 +1,29 @@
+---
+source: crates/markmydown/tests/preview_spec.rs
+expression: "html_body(&document, None)"
+---
+<ul>
+<li><p>bullet</p>
+<ul>
+<li><p>nested</p>
+</li>
+</ul>
+</li>
+</ul>
+<ol start="1">
+<li><p>ordered</p>
+</li>
+<li><p>second</p>
+</li>
+</ol>
+<ul>
+<li class="task-list-item"><input type="checkbox" checked disabled> <p>checked</p>
+</li>
+<li class="task-list-item"><input type="checkbox" disabled> <p>unchecked</p>
+</li>
+</ul>
+<dl>
+<dt>Term</dt>
+<dd><p>Definition</p>
+</dd>
+</dl>

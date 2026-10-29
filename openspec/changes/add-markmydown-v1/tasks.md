@@ -46,18 +46,18 @@
 
 ## 4. Preview
 
-- [ ] 4.1 Implement the preview model from the comrak AST with block, inline, and source-range data; verify snapshot tests for representative fixtures.
-- [ ] 4.2 Render headings, paragraphs, emphasis, lists, task lists, tables, quotes, code, images, links, and rules; verify visual fixtures for each block type.
-- [ ] 4.3 Add syntect code highlighting and the copy action; verify supported, unknown, and empty code blocks.
-- [ ] 4.4 Add block math rendering via `iced_math` or `latex-rust`; verify display equations, invalid equations, and inline math as literal text.
-- [ ] 4.5 Add Mermaid rendering via `merman` to SVG; verify flowchart, invalid diagram, and oversized diagram scenarios.
-- [ ] 4.6 Add relative image loading, missing-image placeholders, and external link handling; verify each scenario.
-- [ ] 4.7 Add HTML sanitization; verify script tags, event handlers, and JavaScript URLs are neutralized while safe HTML renders.
-- [ ] 4.8 Implement read mode with outline and reading progress; verify entering, outline navigation, and progress updates.
-- [ ] 4.9 Implement two-way scroll synchronization; verify editor-to-preview, preview-to-editor, and a long-document fixture without visible jumping.
-- [ ] 4.10 Add preview debounce, math/Mermaid caching, block virtualization, and the large-file threshold; verify a 1 MB document remains responsive and can be refreshed manually.
-- [ ] 4.11 Add preview model and render snapshot tests; verify `cargo test` covers the scenarios in `specs/markdown-preview/spec.md`.
-- [ ] 4.12 Document the preview model and extension points in `docs/preview.md`; verify the document matches the implemented block and inline types.
+- [x] 4.1 Implement the preview model from the comrak AST with block, inline, and source-range data; verify snapshot tests for representative fixtures.
+- [x] 4.2 Render headings, paragraphs, emphasis, lists, task lists, tables, quotes, code, images, links, and rules; verify visual fixtures for each block type.
+- [x] 4.3 Add syntect code highlighting and the copy action; verify supported, unknown, and empty code blocks.
+- [x] 4.4 Add block math rendering via `iced_math` or `latex-rust`; verify display equations, invalid equations, and inline math as literal text.
+- [x] 4.5 Add Mermaid rendering via `merman` to SVG; verify flowchart, invalid diagram, and oversized diagram scenarios.
+- [x] 4.6 Add relative image loading, missing-image placeholders, and external link handling; verify each scenario.
+- [x] 4.7 Add HTML sanitization; verify script tags, event handlers, and JavaScript URLs are neutralized while safe HTML renders.
+- [x] 4.8 Implement read mode with outline and reading progress; verify entering, outline navigation, and progress updates.
+- [x] 4.9 Implement two-way scroll synchronization; verify editor-to-preview, preview-to-editor, and a long-document fixture without visible jumping.
+- [x] 4.10 Add preview debounce, math/Mermaid caching, block virtualization, and the large-file threshold; verify a 1 MB document remains responsive and can be refreshed manually.
+- [x] 4.11 Add preview model and render snapshot tests; verify `cargo test` covers the scenarios in `specs/markdown-preview/spec.md`.
+- [x] 4.12 Document the preview model and extension points in `docs/preview.md`; verify the document matches the implemented block and inline types.
 
 ## 5. Export
 

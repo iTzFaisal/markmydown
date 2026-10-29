@@ -140,6 +140,14 @@ impl super::CodeEditor {
         self.buffer.line_count()
     }
 
+    /// Logical line at the top of the viewport.
+    ///
+    /// The host uses this to keep a Markdown preview synchronized with the
+    /// editor's visible source range.
+    pub fn first_visible_line(&self) -> usize {
+        self.last_first_visible_line
+    }
+
     /// Enables focus mode: non-current text is dimmed and the caret is kept
     /// vertically centered.
     pub fn set_focus_mode(&mut self, enabled: bool) {

@@ -1,0 +1,29 @@
+---
+source: crates/markmydown/tests/preview_spec.rs
+expression: "html_body(&document, None)"
+---
+<blockquote>
+<p>A quote</p>
+<ul>
+<li><p>with a list</p>
+</li>
+</ul>
+</blockquote>
+<table>
+<thead><tr>
+<th style="text-align:left">Left</th>
+<th style="text-align:center">Center</th>
+<th style="text-align:right">Right</th>
+</tr></thead>
+<tbody>
+<tr>
+<td style="text-align:left">1</td>
+<td style="text-align:center">2</td>
+<td style="text-align:right">3</td>
+</tr>
+</tbody>
+</table>
+<pre class="mmd-code-block"><code class="language-rust"><span style="color:#b48ead">fn</span><span style="color:#c0c5ce"> </span><span style="color:#8fa1b3">main</span><span style="color:#c0c5ce">(</span><span style="color:#c0c5ce">)</span><span style="color:#c0c5ce"> </span><span style="color:#c0c5ce">{</span><span style="color:#c0c5ce">
+</span><span style="color:#c0c5ce">    </span><span style="color:#c0c5ce">println!</span><span style="color:#c0c5ce">(</span><span style="color:#c0c5ce">&quot;</span><span style="color:#a3be8c">hi</span><span style="color:#c0c5ce">&quot;</span><span style="color:#c0c5ce">)</span><span style="color:#c0c5ce">;</span><span style="color:#c0c5ce">
+</span><span style="color:#c0c5ce">}</span><span style="color:#c0c5ce">
+</span></code></pre>

@@ -43,6 +43,10 @@ pub enum Message {
 }
 
 /// Theme, typography, and base directory for resolving images.
+///
+/// This is a small `Copy` bundle so it can be constructed for a single view
+/// call without extending the lifetime of the returned widgets.
+#[derive(Debug, Clone, Copy)]
 pub struct PreviewStyles<'a> {
     pub tokens: &'a ThemeTokens,
     pub typography: &'a Typography,
@@ -55,6 +59,37 @@ pub struct RenderCaches {
     pub mermaid: ContentCache<Result<String, String>>,
 }
 
+/// The last known preview viewport, used to virtualize long documents.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreviewViewport {
+    pub offset_y: f32,
+    pub height: f32,
+}
+
+impl Default for PreviewViewport {
+    fn default() -> Self {
+        Self {
+            offset_y: 0.0,
+            height: 800.0,
+        }
+    }
+}
+
+/// A window of blocks to render plus spacers that preserve the scroll height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockWindow {
+    pub start: usize,
+    pub end: usize,
+    pub top_pad: f32,
+    pub bottom_pad: f32,
+}
+
+/// Documents shorter than this render all blocks at once.
+pub const VIRTUALIZE_AFTER: usize = 80;
+/// Extra blocks kept above and below the viewport.
+pub const OVERSCAN_BLOCKS: usize = 8;
+const BLOCK_SPACING: f32 = 12.0;
+
 impl Default for RenderCaches {
     fn default() -> Self {
         Self {
@@ -65,18 +100,36 @@ impl Default for RenderCaches {
 }
 
 /// Renders the document into a scrollable preview.
+///
+/// Long documents are virtualized: only the blocks around the viewport are
+/// built, while fixed spacers preserve the estimated scroll height.
 pub fn view<'a>(
     document: &'a PreviewDocument,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
     scroll_id: &'a ScrollableId,
+    viewport: PreviewViewport,
 ) -> Element<'a, Message> {
-    let mut content = column![].spacing(12).width(Length::Fill);
-    for block in &document.blocks {
+    let window = block_window(document, styles.typography, viewport);
+
+    let mut content = column![].spacing(BLOCK_SPACING).width(Length::Fill);
+    if window.top_pad > 0.0 {
+        content = content.push(Space::new().height(Length::Fixed(window.top_pad)));
+    }
+
+    for block in document
+        .blocks
+        .get(window.start..window.end)
+        .unwrap_or_default()
+    {
         content = content.push(render_block(block, styles, caches));
     }
 
-    if !document.footnotes.is_empty() {
+    if window.bottom_pad > 0.0 {
+        content = content.push(Space::new().height(Length::Fixed(window.bottom_pad)));
+    }
+
+    if window.end == document.blocks.len() && !document.footnotes.is_empty() {
         content = content.push(render_footnotes(document, styles, caches));
     }
 
@@ -104,9 +157,154 @@ pub fn view<'a>(
         .into()
 }
 
+/// Chooses the blocks to render for a viewport and estimates the spacers that
+/// keep the scrollbar proportional to the whole document.
+pub fn block_window(
+    document: &PreviewDocument,
+    typography: &Typography,
+    viewport: PreviewViewport,
+) -> BlockWindow {
+    let len = document.blocks.len();
+    if len <= VIRTUALIZE_AFTER {
+        return BlockWindow {
+            start: 0,
+            end: len,
+            top_pad: 0.0,
+            bottom_pad: 0.0,
+        };
+    }
+
+    let heights: Vec<f32> = document
+        .blocks
+        .iter()
+        .map(|block| estimated_block_height(block, typography) + BLOCK_SPACING)
+        .collect();
+    let total: f32 = heights.iter().sum();
+    let offset = viewport.offset_y.clamp(0.0, total.max(0.0));
+    let viewport_height = viewport.height.max(1.0);
+
+    let mut cursor = 0.0;
+    let mut start = 0;
+    while start < len && cursor + heights[start] < offset {
+        cursor += heights[start];
+        start += 1;
+    }
+
+    let mut end = start;
+    let mut visible_end = cursor;
+    while end < len && visible_end < offset + viewport_height {
+        visible_end += heights[end];
+        end += 1;
+    }
+
+    start = start.saturating_sub(OVERSCAN_BLOCKS);
+    end = end.saturating_add(OVERSCAN_BLOCKS).min(len);
+
+    let top_pad: f32 = heights[..start].iter().sum();
+    let bottom_pad: f32 = heights[end..].iter().sum();
+
+    BlockWindow {
+        start,
+        end,
+        top_pad,
+        bottom_pad,
+    }
+}
+
+/// Rough height of one block, used only for virtualized scroll geometry.
+pub fn estimated_block_height(block: &Block, typography: &Typography) -> f32 {
+    let font_size = typography.font_size.max(8.0);
+    let line_height = font_size * typography.line_height.max(1.0);
+    let width = if typography.max_width > 0.0 {
+        typography.max_width
+    } else {
+        760.0
+    };
+    let chars_per_line = (width / (font_size * 0.52)).max(20.0);
+
+    match block {
+        Block::Heading { level, inlines, .. } => {
+            let scale = match level {
+                1 => 2.0,
+                2 => 1.6,
+                3 => 1.3,
+                4 => 1.12,
+                5 => 1.0,
+                _ => 0.95,
+            };
+            let lines = estimate_lines(&Inline::plain_text(inlines), chars_per_line / scale);
+            lines as f32 * font_size * scale * 1.35 + 22.0
+        }
+        Block::Paragraph { inlines, .. } => {
+            let lines = estimate_lines(&Inline::plain_text(inlines), chars_per_line);
+            lines as f32 * line_height + BLOCK_SPACING
+        }
+        Block::List { items, .. } => {
+            let heights: f32 = items
+                .iter()
+                .map(|item| {
+                    let inner: f32 = item
+                        .blocks
+                        .iter()
+                        .map(|block| estimated_block_height(block, typography))
+                        .sum();
+                    inner.max(line_height) + 6.0
+                })
+                .sum();
+            heights + BLOCK_SPACING
+        }
+        Block::DefinitionList { items, .. } => {
+            let heights: f32 = items
+                .iter()
+                .map(|item| {
+                    let definitions: f32 = item
+                        .definitions
+                        .iter()
+                        .flat_map(|blocks| blocks.iter())
+                        .map(|block| estimated_block_height(block, typography))
+                        .sum();
+                    line_height + definitions + 8.0
+                })
+                .sum();
+            heights + BLOCK_SPACING
+        }
+        Block::Code { code, .. } => {
+            let lines = code.lines().count().max(1) as f32;
+            lines * font_size * 0.86 * 1.45 + 64.0
+        }
+        Block::Quote { blocks, .. } => {
+            let inner: f32 = blocks
+                .iter()
+                .map(|block| estimated_block_height(block, typography))
+                .sum();
+            inner + 24.0
+        }
+        Block::Table { rows, .. } => {
+            (rows.len() + 1) as f32 * (font_size * 1.5 + 16.0) + BLOCK_SPACING
+        }
+        Block::Rule { .. } => BLOCK_SPACING,
+        Block::Math { .. } => font_size * 2.0 + 32.0,
+        Block::Mermaid { .. } => 220.0,
+        Block::Html { html, .. } => {
+            let lines = estimate_lines(html, chars_per_line);
+            lines as f32 * line_height + BLOCK_SPACING
+        }
+    }
+}
+
+fn estimate_lines(text: &str, chars_per_line: f32) -> usize {
+    let chars_per_line = chars_per_line.max(1.0);
+    let mut lines = 0usize;
+    for line in text.split('\n') {
+        let wrapped = (line.chars().count() as f32 / chars_per_line).ceil() as usize;
+        lines += wrapped.max(1);
+    }
+    lines.max(1)
+}
+
 fn render_block<'a>(
     block: &'a Block,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
 ) -> Element<'a, Message> {
     match block {
@@ -218,7 +416,7 @@ fn render_block<'a>(
 
 #[derive(Clone)]
 struct SpanContext<'a> {
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     color: Color,
     font: Font,
     size: f32,
@@ -229,7 +427,7 @@ struct SpanContext<'a> {
 }
 
 impl<'a> SpanContext<'a> {
-    fn body(styles: &'a PreviewStyles<'a>) -> Self {
+    fn body(styles: PreviewStyles<'a>) -> Self {
         Self {
             styles,
             color: styles.tokens.text,
@@ -242,7 +440,7 @@ impl<'a> SpanContext<'a> {
         }
     }
 
-    fn heading(styles: &'a PreviewStyles<'a>, size: f32) -> Self {
+    fn heading(styles: PreviewStyles<'a>, size: f32) -> Self {
         Self {
             color: styles.tokens.heading,
             font: Font {
@@ -285,7 +483,7 @@ impl<'a> SpanContext<'a> {
 fn rich_text<'a>(
     inlines: &'a [Inline],
     context: SpanContext<'a>,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     let mut spans = Vec::new();
     push_inlines(inlines, &context, &mut spans);
@@ -296,7 +494,7 @@ fn rich_text<'a>(
 fn rich_text_from_spans<'a>(
     spans: Vec<iced::widget::text::Span<'a, String, Font>>,
     context: &SpanContext<'a>,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     Rich::<String, Message>::with_spans(spans)
         .size(context.size)
@@ -307,7 +505,7 @@ fn rich_text_from_spans<'a>(
         .into()
 }
 
-fn render_html_block<'a>(html: &'a str, styles: &'a PreviewStyles<'a>) -> Element<'a, Message> {
+fn render_html_block<'a>(html: &'a str, styles: PreviewStyles<'a>) -> Element<'a, Message> {
     let context = SpanContext::body(styles);
     let mut spans = Vec::new();
     let inline = Inline::Html(html.to_string());
@@ -384,7 +582,7 @@ fn push_inlines<'a>(
                 next.font = Font::MONOSPACE;
                 next.color = context.styles.tokens.muted;
                 next.size *= 0.9;
-                spans.push(span(source.clone(), &next));
+                spans.push(span(format!("${source}$"), &next));
             }
             Inline::Html(html) => {
                 let mut next = context.clone();
@@ -447,7 +645,7 @@ fn html_to_text(html: &str) -> String {
 
 fn render_paragraph_with_images<'a>(
     inlines: &'a [Inline],
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     let mut col = column![].spacing(8).width(Length::Fill);
     let mut text_start = 0;
@@ -477,11 +675,7 @@ fn render_paragraph_with_images<'a>(
     col.into()
 }
 
-fn render_image<'a>(
-    url: &'a str,
-    alt: &'a str,
-    styles: &'a PreviewStyles<'a>,
-) -> Element<'a, Message> {
+fn render_image<'a>(url: &'a str, alt: &'a str, styles: PreviewStyles<'a>) -> Element<'a, Message> {
     let Some(path) = resolve_image_path(styles.base_dir, url) else {
         return missing_image(alt, url, styles);
     };
@@ -496,7 +690,7 @@ fn render_image<'a>(
 fn missing_image<'a>(
     alt: &'a str,
     url: &'a str,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     container(
         column![
@@ -543,7 +737,7 @@ fn render_list<'a>(
     ordered: bool,
     start: usize,
     items: &'a [super::model::ListItem],
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
 ) -> Element<'a, Message> {
     let mut col = column![].spacing(6).width(Length::Fill);
@@ -587,7 +781,7 @@ fn render_table<'a>(
     alignments: &[TableAlignment],
     header: &'a [Vec<Inline>],
     rows: &'a [Vec<Vec<Inline>>],
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     let mut table = column![].spacing(0).width(Length::Fill);
 
@@ -632,7 +826,7 @@ fn table_cell<'a>(
     inlines: &'a [Inline],
     alignment: TableAlignment,
     header: bool,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     let background = if header {
         styles.tokens.surface_raised
@@ -667,7 +861,7 @@ fn table_cell<'a>(
 fn render_code<'a>(
     language: Option<&'a str>,
     code: &str,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     let mut header = row![].spacing(8).width(Length::Fill);
     header = header.push(
@@ -708,7 +902,7 @@ fn render_code<'a>(
 fn code_spans<'a>(
     code: &str,
     language: Option<&str>,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Vec<iced::widget::text::Span<'a, String, Font>> {
     let fallback = || {
         vec![
@@ -768,7 +962,7 @@ fn code_spans<'a>(
 
 fn render_math<'a>(
     source: &str,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
 ) -> Element<'a, Message> {
     let font_size = styles.typography.font_size * 1.15;
@@ -789,6 +983,7 @@ fn render_math<'a>(
         Ok(bytes) => svg(svg::Handle::from_memory(bytes))
             .width(Length::Fill)
             .height(Length::Shrink)
+            .content_fit(ContentFit::Contain)
             .into(),
         Err(error) => error_block(source.to_string(), error, styles),
     }
@@ -796,7 +991,7 @@ fn render_math<'a>(
 
 fn render_mermaid<'a>(
     source: &str,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
 ) -> Element<'a, Message> {
     let key = cache_key(source, 0.0, styles.tokens.text);
@@ -815,7 +1010,8 @@ fn render_mermaid<'a>(
         Ok(svg_source) => container(
             svg(svg::Handle::from_memory(svg_source.into_bytes()))
                 .width(Length::Fill)
-                .height(Length::Shrink),
+                .height(Length::Shrink)
+                .content_fit(ContentFit::Contain),
         )
         .width(Length::Fill)
         .padding(8)
@@ -827,7 +1023,7 @@ fn render_mermaid<'a>(
 fn error_block<'a>(
     source: String,
     error: String,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
 ) -> Element<'a, Message> {
     container(
         column![
@@ -855,7 +1051,7 @@ fn error_block<'a>(
 
 fn render_footnotes<'a>(
     document: &'a PreviewDocument,
-    styles: &'a PreviewStyles<'a>,
+    styles: PreviewStyles<'a>,
     caches: &'a RefCell<RenderCaches>,
 ) -> Element<'a, Message> {
     let mut col = column![rule::horizontal(1).style(move |_| rule::Style {
@@ -932,5 +1128,73 @@ mod tests {
     fn inline_html_preserves_safe_breaks() {
         assert_eq!(html_to_text("a<br>b"), "a\nb");
         assert_eq!(html_to_text("<kbd>Cmd</kbd>"), "Cmd");
+    }
+
+    #[test]
+    fn long_documents_are_virtualized_with_spacers() {
+        let mut source = String::new();
+        for index in 0..400 {
+            source.push_str(&format!("Paragraph {index} with a little text.\n\n"));
+        }
+        let document = crate::preview::parser::parse(&source, 0);
+        let typography = Typography::preview_default();
+
+        let first = block_window(
+            &document,
+            &typography,
+            PreviewViewport {
+                offset_y: 0.0,
+                height: 800.0,
+            },
+        );
+        assert_eq!(first.start, 0);
+        assert!(first.end < document.blocks.len());
+        assert!(first.bottom_pad > 0.0);
+
+        let middle = block_window(
+            &document,
+            &typography,
+            PreviewViewport {
+                offset_y: 10_000.0,
+                height: 800.0,
+            },
+        );
+        assert!(middle.start > 0);
+        assert!(middle.top_pad > 0.0);
+        assert!(middle.end < document.blocks.len());
+        assert!(middle.bottom_pad > 0.0);
+    }
+
+    #[test]
+    fn short_documents_render_every_block() {
+        let document = crate::preview::parser::parse("# One\n\nTwo\n", 0);
+        let window = block_window(
+            &document,
+            &Typography::preview_default(),
+            PreviewViewport::default(),
+        );
+
+        assert_eq!(window.start, 0);
+        assert_eq!(window.end, document.blocks.len());
+        assert_eq!(window.top_pad, 0.0);
+        assert_eq!(window.bottom_pad, 0.0);
+    }
+
+    #[test]
+    fn known_languages_highlight_and_unknown_languages_fall_back() {
+        let tokens = ThemeTokens::light();
+        let typography = Typography::preview_default();
+        let styles = PreviewStyles {
+            tokens: &tokens,
+            typography: &typography,
+            base_dir: None,
+        };
+
+        assert!(code_spans("fn main() {}\n", Some("rust"), styles).len() > 1);
+        assert_eq!(
+            code_spans("fn main() {}\n", Some("unknown"), styles).len(),
+            1
+        );
+        assert_eq!(code_spans("", Some("rust"), styles).len(), 1);
     }
 }

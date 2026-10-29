@@ -1,0 +1,341 @@
+---
+source: crates/markmydown/tests/preview_spec.rs
+expression: document
+---
+PreviewDocument {
+    blocks: [
+        Heading {
+            level: 1,
+            inlines: [
+                Text(
+                    "Title",
+                ),
+            ],
+            range: SourceRange {
+                start_line: 0,
+                end_line: 0,
+            },
+        },
+        Paragraph {
+            inlines: [
+                Text(
+                    "A paragraph with ",
+                ),
+                Strong(
+                    [
+                        Text(
+                            "strong",
+                        ),
+                    ],
+                ),
+                Text(
+                    ", ",
+                ),
+                Emphasis(
+                    [
+                        Text(
+                            "emphasis",
+                        ),
+                    ],
+                ),
+                Text(
+                    ", ",
+                ),
+                Strikethrough(
+                    [
+                        Text(
+                            "strike",
+                        ),
+                    ],
+                ),
+                Text(
+                    ", ",
+                ),
+                Highlight(
+                    [
+                        Text(
+                            "mark",
+                        ),
+                    ],
+                ),
+                Text(
+                    ", H",
+                ),
+                Subscript(
+                    [
+                        Text(
+                            "2",
+                        ),
+                    ],
+                ),
+                Text(
+                    "O,",
+                ),
+                SoftBreak,
+                Text(
+                    "x",
+                ),
+                Superscript(
+                    [
+                        Text(
+                            "2",
+                        ),
+                    ],
+                ),
+                Text(
+                    ", ",
+                ),
+                Code(
+                    "inline",
+                ),
+                Text(
+                    ", a ",
+                ),
+                Link {
+                    url: "https://example.com",
+                    title: "",
+                    children: [
+                        Text(
+                            "link",
+                        ),
+                    ],
+                },
+                Text(
+                    ", and ",
+                ),
+                Image {
+                    url: "image.png",
+                    title: "",
+                    alt: "alt",
+                },
+                Text(
+                    ".",
+                ),
+            ],
+            range: SourceRange {
+                start_line: 2,
+                end_line: 3,
+            },
+        },
+        List {
+            ordered: false,
+            start: 1,
+            tight: true,
+            items: [
+                ListItem {
+                    checked: None,
+                    blocks: [
+                        Paragraph {
+                            inlines: [
+                                Text(
+                                    "alpha",
+                                ),
+                            ],
+                            range: SourceRange {
+                                start_line: 5,
+                                end_line: 5,
+                            },
+                        },
+                    ],
+                },
+                ListItem {
+                    checked: Some(
+                        true,
+                    ),
+                    blocks: [
+                        Paragraph {
+                            inlines: [
+                                Text(
+                                    "done",
+                                ),
+                            ],
+                            range: SourceRange {
+                                start_line: 6,
+                                end_line: 6,
+                            },
+                        },
+                    ],
+                },
+                ListItem {
+                    checked: Some(
+                        false,
+                    ),
+                    blocks: [
+                        Paragraph {
+                            inlines: [
+                                Text(
+                                    "todo",
+                                ),
+                            ],
+                            range: SourceRange {
+                                start_line: 7,
+                                end_line: 7,
+                            },
+                        },
+                    ],
+                },
+            ],
+            range: SourceRange {
+                start_line: 5,
+                end_line: 7,
+            },
+        },
+        List {
+            ordered: true,
+            start: 1,
+            tight: true,
+            items: [
+                ListItem {
+                    checked: None,
+                    blocks: [
+                        Paragraph {
+                            inlines: [
+                                Text(
+                                    "first",
+                                ),
+                            ],
+                            range: SourceRange {
+                                start_line: 9,
+                                end_line: 9,
+                            },
+                        },
+                    ],
+                },
+                ListItem {
+                    checked: None,
+                    blocks: [
+                        Paragraph {
+                            inlines: [
+                                Text(
+                                    "second",
+                                ),
+                            ],
+                            range: SourceRange {
+                                start_line: 10,
+                                end_line: 10,
+                            },
+                        },
+                    ],
+                },
+            ],
+            range: SourceRange {
+                start_line: 9,
+                end_line: 10,
+            },
+        },
+        Quote {
+            blocks: [
+                Paragraph {
+                    inlines: [
+                        Text(
+                            "quoted text",
+                        ),
+                    ],
+                    range: SourceRange {
+                        start_line: 12,
+                        end_line: 12,
+                    },
+                },
+            ],
+            range: SourceRange {
+                start_line: 12,
+                end_line: 12,
+            },
+        },
+        Table {
+            alignments: [
+                Left,
+                Center,
+                Right,
+            ],
+            header: [
+                [
+                    Text(
+                        "Left",
+                    ),
+                ],
+                [
+                    Text(
+                        "Center",
+                    ),
+                ],
+                [
+                    Text(
+                        "Right",
+                    ),
+                ],
+            ],
+            rows: [
+                [
+                    [
+                        Text(
+                            "1",
+                        ),
+                    ],
+                    [
+                        Text(
+                            "2",
+                        ),
+                    ],
+                    [
+                        Text(
+                            "3",
+                        ),
+                    ],
+                ],
+            ],
+            range: SourceRange {
+                start_line: 14,
+                end_line: 16,
+            },
+        },
+        Code {
+            language: Some(
+                "rust",
+            ),
+            code: "fn main() {}\n",
+            range: SourceRange {
+                start_line: 18,
+                end_line: 20,
+            },
+        },
+        Rule {
+            range: SourceRange {
+                start_line: 22,
+                end_line: 22,
+            },
+        },
+        DefinitionList {
+            items: [
+                DefinitionItem {
+                    term: [
+                        Text(
+                            "Term",
+                        ),
+                    ],
+                    definitions: [
+                        [
+                            Paragraph {
+                                inlines: [
+                                    Text(
+                                        "Definition",
+                                    ),
+                                ],
+                                range: SourceRange {
+                                    start_line: 26,
+                                    end_line: 26,
+                                },
+                            },
+                        ],
+                    ],
+                },
+            ],
+            range: SourceRange {
+                start_line: 24,
+                end_line: 26,
+            },
+        },
+    ],
+    footnotes: [],
+    line_offset: 0,
+}
